@@ -13,6 +13,14 @@
         </else>
     </filter>
     <header name="X-Correlation-ID" scope="transport" expression="$ctx:requestId"/>
+    <!-- Drop the caller's content-negotiation headers so they are not
+         forwarded upstream. A client sending "Accept-Encoding: gzip, deflate,
+         br" otherwise makes the backend return a compressed body, which MI
+         then fails to parse with
+         "601000 Error while building message. Error while building Passthrough stream".
+         Postman and most HTTP clients send this by default; curl does not,
+         which is why it stayed hidden until the contract tests ran. -->
+    <header name="Accept-Encoding" scope="transport" action="remove"/>
     <!-- The request path is deliberately not logged: it carries the account
          or customer identifier. Each API logs its own masked copy instead. -->
     <log level="custom" category="INFO">

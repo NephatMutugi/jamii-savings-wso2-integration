@@ -29,15 +29,28 @@
                     <property name="ERR_CODE" value="BACKEND_ERROR"/>
                     <property name="ERR_MSG" value="The upstream service returned an invalid response"/>
                 </case>
+                <!-- 601000 is a message-building failure. When it happens
+                     after a backend call it means the response could not be
+                     parsed, which is a backend problem and not the caller's
+                     fault, so it must not be reported as 400. -->
+                <case regex="601000">
+                    <property name="ERR_HTTP" value="502"/>
+                    <property name="ERR_CODE" value="BACKEND_ERROR"/>
+                    <property name="ERR_MSG" value="The upstream service returned an unreadable response"/>
+                </case>
                 <default>
                     <property name="ERR_HTTP" value="500"/>
                     <property name="ERR_CODE" value="INTERNAL_ERROR"/>
                     <property name="ERR_MSG" value="An unexpected error occurred"/>
                 </default>
             </switch>
-            <!-- VERIFY: the ERROR_MESSAGE text for a malformed JSON body on 4.6.0 -->
+            <!-- Deliberately does NOT match the bare word "building". It used
+                 to, and that turned every unreadable backend response into a
+                 400, telling callers their request was malformed when the
+                 real fault was upstream. Only JSON-parse specific wording
+                 counts as a client error. -->
             <filter source="$ctx:ERROR_MESSAGE"
-                    regex="(?s).*(building|JsonParse|Unexpected character|Malformed|Invalid JSON).*">
+                    regex="(?s).*(JsonParse|Unexpected character|Malformed JSON|Invalid JSON).*">
                 <then>
                     <property name="ERR_HTTP" value="400"/>
                     <property name="ERR_CODE" value="INVALID_REQUEST"/>
