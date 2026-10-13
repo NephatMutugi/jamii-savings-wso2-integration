@@ -1,0 +1,122 @@
+type: api_product
+version: v4.6.0
+data:
+  id: 0457c548-ac87-4ce3-9ac4-d06d080b5ca2
+  name: JamiiCoreBanking
+  displayName: JamiiCoreBanking
+  context: /jamii/core
+  version: v1
+  provider: admin
+  hasThumbnail: false
+  state: PUBLISHED
+  enableSchemaValidation: false
+  isDefaultVersion: true
+  isRevision: false
+  revisionId: 0
+  responseCachingEnabled: false
+  cacheTimeout: 300
+  visibility: PUBLIC
+  visibleRoles: []
+  visibleTenants: []
+  accessControl: NONE
+  accessControlRoles: []
+  transport:
+   - http
+   - https
+  tags: []
+  policies:
+   - Gold
+  authorizationHeader: Authorization
+  apiKeyHeader: ApiKey
+  securityScheme:
+   - oauth_basic_auth_api_key_mandatory
+   - oauth2
+  subscriptionAvailability: ALL_TENANTS
+  subscriptionAvailableTenants: []
+  additionalProperties: []
+  additionalPropertiesMap: {}
+  businessInformation: {}
+  corsConfiguration:
+    corsConfigurationEnabled: false
+    accessControlAllowOrigins:
+     - '*'
+    accessControlAllowCredentials: false
+    accessControlAllowHeaders:
+     - authorization
+     - Access-Control-Allow-Origin
+     - Content-Type
+     - SOAPAction
+     - apikey
+     - Internal-Key
+    accessControlAllowMethods:
+     - GET
+     - PUT
+     - POST
+     - DELETE
+     - PATCH
+     - OPTIONS
+  createdTime: "1791909405333"
+  gatewayVendor: wso2
+  apis:
+   -
+    name: JamiiCustomerProfile
+    apiId: dd949a19-6d37-4451-9d83-cd7585b7696e
+    version: v1
+    operations:
+     -
+      id: ""
+      target: "/{customerId}"
+      verb: GET
+      authType: Application & Application User
+      throttlingPolicy: Unlimited
+      scopes: []
+      usedProductIds: []
+      operationPolicies:
+        request: []
+        response: []
+        fault: []
+   -
+    name: JamiiAccountBalance
+    apiId: 14dddda7-c70e-47c2-8619-25c959f10e68
+    version: v1
+    operations:
+     -
+      id: ""
+      target: "/{accountNumber}/balance"
+      verb: GET
+      authType: Application & Application User
+      throttlingPolicy: Unlimited
+      scopes: []
+      usedProductIds: []
+      operationPolicies:
+        request:
+         -
+          policyName: correlationIdInjector
+          policyVersion: v1
+          policyType: common
+          policyId: 91010207-8841-4228-ad2f-b3d24ef32524
+          parameters: {}
+        response: []
+        fault: []
+   -
+    name: JamiiLoanEligibility
+    apiId: 90657a8f-ea5c-46db-9195-8afc5aaf53d4
+    version: v1
+    operations:
+     -
+      id: ""
+      target: /eligibility
+      verb: POST
+      authType: Application & Application User
+      throttlingPolicy: Unlimited
+      scopes: []
+      usedProductIds: []
+      operationPolicies:
+        request: []
+        response: []
+        fault: []
+  scopes: []
+  categories: []
+  audiences:
+   - all
+  egress: false

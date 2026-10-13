@@ -1,0 +1,36 @@
+type: api
+version: v4.6.0
+data:
+  name: JamiiCustomerProfile
+  description: |
+    Returns a customer profile from the core customer system.
+
+    A managed proxy in WSO2 Micro Integrator fronts the upstream service. The
+    response is a deliberate projection: the upstream record carries
+    credentials and financial identifiers that are never exposed here.
+  context: /jamii/customers
+  version: v1
+  provider: admin
+  lifeCycleStatus: PUBLISHED
+  isRevision: false
+  revisionId: 0
+  type: HTTP
+  transport:
+  - http
+  - https
+  tags:
+  - customers
+  policies:
+  - Gold
+  securityScheme:
+  - oauth2
+  visibility: PUBLIC
+  # Defaults only; real values come from the params file at import time.
+  endpointConfig:
+    endpoint_type: http
+    production_endpoints:
+      url: http://mi:8290/customers
+    sandbox_endpoints:
+      url: http://mi:8290/customers
+  endpointImplementationType: ENDPOINT
+  websubSubscriptionConfiguration: null

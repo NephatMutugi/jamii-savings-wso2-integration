@@ -1,0 +1,120 @@
+type: api
+version: v4.6.0
+data:
+  id: 90657a8f-ea5c-46db-9195-8afc5aaf53d4
+  name: JamiiLoanEligibility
+  displayName: JamiiLoanEligibility
+  description: |
+    Assesses whether a customer qualifies for a requested loan.
+
+    The REST request is transformed into a SOAP call to the scoring service,
+    whose response is converted back into clean JSON. Callers never see SOAP,
+    and a SOAP Fault is translated into a REST error rather than surfaced as
+    fault XML.
+
+    This API is rate limited more tightly than the others because it fronts a
+    shared third-party scoring service.
+  context: /jamii/loans
+  version: v1
+  provider: admin
+  lifeCycleStatus: PUBLISHED
+  responseCachingEnabled: false
+  cacheTimeout: 300
+  hasThumbnail: false
+  isDefaultVersion: false
+  isRevision: false
+  revisionId: 0
+  enableSchemaValidation: false
+  enableSubscriberVerification: false
+  type: HTTP
+  audiences:
+   - all
+  transport:
+   - http
+   - https
+  tags:
+   - loans
+  policies:
+   - SoapBackendGuard
+  organizationPolicies: []
+  authorizationHeader: Authorization
+  apiKeyHeader: ApiKey
+  securityScheme:
+   - api_key
+   - oauth_basic_auth_api_key_mandatory
+  visibility: PUBLIC
+  visibleRoles: []
+  visibleTenants: []
+  visibleOrganizations:
+   - carbon.super
+  mediationPolicies: []
+  subscriptionAvailability: CURRENT_TENANT
+  subscriptionAvailableTenants: []
+  additionalProperties: []
+  additionalPropertiesMap: {}
+  accessControl: NONE
+  accessControlRoles: []
+  businessInformation: {}
+  corsConfiguration:
+    corsConfigurationEnabled: false
+    accessControlAllowOrigins:
+     - '*'
+    accessControlAllowCredentials: false
+    accessControlAllowHeaders:
+     - authorization
+     - Access-Control-Allow-Origin
+     - Content-Type
+     - SOAPAction
+     - apikey
+     - Internal-Key
+    accessControlAllowMethods:
+     - GET
+     - PUT
+     - POST
+     - DELETE
+     - PATCH
+     - OPTIONS
+  websubSubscriptionConfiguration:
+    enable: false
+    secret: ""
+    signingAlgorithm: SHA1
+    signatureHeader: x-hub-signature
+  createdTime: "1791894967850"
+  lastUpdatedTimestamp: "1791894968145"
+  lastUpdatedTime: 2026-10-13 12:36:08.145
+  endpointConfig:
+    endpoint_type: http
+    sandbox_endpoints:
+      url: http://mi:8290/loans
+    production_endpoints:
+      url: http://mi:8290/loans
+  endpointImplementationType: ENDPOINT
+  subtypeConfiguration:
+    subtype: DEFAULT
+  scopes: []
+  operations:
+   -
+    id: ""
+    target: /eligibility
+    verb: POST
+    authType: Application & Application User
+    throttlingPolicy: Unlimited
+    scopes: []
+    usedProductIds: []
+    operationPolicies:
+      request: []
+      response: []
+      fault: []
+  categories: []
+  keyManagers:
+   - all
+  advertiseInfo:
+    advertised: false
+    apiOwner: admin
+    vendor: WSO2
+  gatewayVendor: wso2
+  gatewayType: wso2/synapse
+  initiatedFromGateway: false
+  asyncTransportProtocols: []
+  egress: false
+  organizationId: carbon.super

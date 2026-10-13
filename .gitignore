@@ -9,6 +9,7 @@ deploy/carbonapps/*.car
 
 # Downloaded binaries
 mi/deployment/libs/*.jar
+tools/
 
 # OS and tooling noise
 .DS_Store

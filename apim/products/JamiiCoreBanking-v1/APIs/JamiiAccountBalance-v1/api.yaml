@@ -1,0 +1,120 @@
+type: api
+version: v4.6.0
+data:
+  id: 14dddda7-c70e-47c2-8619-25c959f10e68
+  name: JamiiAccountBalance
+  displayName: JamiiAccountBalance
+  description: |
+    Returns the current balance and status of a Jamii Savings account.
+
+    Backed by a WSO2 Micro Integrator data service over MySQL. The account
+    number is bound as a query parameter and is validated at the gateway edge,
+    so malformed values are rejected before any database call.
+  context: /jamii/accounts
+  version: v1
+  provider: admin
+  lifeCycleStatus: PUBLISHED
+  responseCachingEnabled: false
+  cacheTimeout: 300
+  hasThumbnail: false
+  isDefaultVersion: false
+  isRevision: false
+  revisionId: 0
+  enableSchemaValidation: false
+  enableSubscriberVerification: false
+  type: HTTP
+  audiences:
+   - all
+  transport:
+   - http
+   - https
+  tags:
+   - accounts
+  policies:
+   - Gold
+  organizationPolicies: []
+  apiKeyHeader: ApiKey
+  securityScheme:
+   - oauth_basic_auth_api_key_mandatory
+   - oauth2
+  visibility: PUBLIC
+  visibleRoles: []
+  visibleTenants: []
+  visibleOrganizations:
+   - none
+  mediationPolicies: []
+  subscriptionAvailability: CURRENT_TENANT
+  subscriptionAvailableTenants: []
+  additionalProperties: []
+  additionalPropertiesMap: {}
+  accessControl: NONE
+  accessControlRoles: []
+  businessInformation: {}
+  corsConfiguration:
+    corsConfigurationEnabled: false
+    accessControlAllowOrigins:
+     - '*'
+    accessControlAllowCredentials: false
+    accessControlAllowHeaders:
+     - authorization
+     - Access-Control-Allow-Origin
+     - Content-Type
+     - SOAPAction
+     - apikey
+     - Internal-Key
+    accessControlAllowMethods:
+     - GET
+     - PUT
+     - POST
+     - DELETE
+     - PATCH
+     - OPTIONS
+  websubSubscriptionConfiguration:
+    enable: false
+    secret: ""
+    signingAlgorithm: SHA1
+    signatureHeader: x-hub-signature
+  createdTime: "1791894745122"
+  lastUpdatedTimestamp: "1791909038862"
+  lastUpdatedTime: 2026-10-13 16:30:38.862
+  endpointConfig:
+    endpoint_type: http
+    sandbox_endpoints:
+      url: http://mi:8290/accounts
+    production_endpoints:
+      url: http://mi:8290/accounts
+  endpointImplementationType: ENDPOINT
+  subtypeConfiguration:
+    subtype: DEFAULT
+  scopes: []
+  operations:
+   -
+    id: ""
+    target: "/{accountNumber}/balance"
+    verb: GET
+    authType: Application & Application User
+    throttlingPolicy: Unlimited
+    scopes: []
+    usedProductIds: []
+    operationPolicies:
+      request:
+       -
+        policyName: correlationIdInjector
+        policyVersion: v1
+        policyType: common
+        policyId: 91010207-8841-4228-ad2f-b3d24ef32524
+        parameters: {}
+      response: []
+      fault: []
+  categories: []
+  keyManagers:
+   - all
+  advertiseInfo:
+    advertised: false
+    vendor: WSO2
+  gatewayVendor: wso2
+  gatewayType: wso2/synapse
+  initiatedFromGateway: false
+  asyncTransportProtocols: []
+  egress: false
+  organizationId: carbon.super

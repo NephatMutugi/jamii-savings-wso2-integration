@@ -1,0 +1,30 @@
+type: throttling policy
+subtype: subscription policy
+version: v4.6.0
+data:
+  policyId: 8ed155b5-cfcb-405c-855e-173302eedaeb
+  policyName: SoapBackendGuard
+  displayName: SoapBackendGuard
+  description: 10 requests per minute. Protects the shared public SOAP scoring backend
+    from consumer load.
+  isDeployed: false
+  type: SubscriptionThrottlePolicy
+  graphQLMaxComplexity: 0
+  graphQLMaxDepth: 0
+  defaultLimit:
+    type: REQUESTCOUNTLIMIT
+    requestCount:
+      timeUnit: min
+      unitTime: 1
+      requestCount: 10
+    bandwidth: null
+    eventCount: null
+    aiApiQuota: null
+  monetization: null
+  rateLimitCount: 0
+  rateLimitTimeUnit: min
+  subscriberCount: 0
+  customAttributes: []
+  stopOnQuotaReach: true
+  billingPlan: FREE
+  permissions: null

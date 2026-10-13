@@ -1,0 +1,254 @@
+openapi: 3.0.3
+info:
+  title: JamiiCustomerProfile
+  description: |
+    Returns a customer profile from the core customer system.
+
+    A managed proxy in WSO2 Micro Integrator fronts the upstream service. The
+    response is a deliberate projection: the upstream record carries
+    credentials and financial identifiers that are never exposed here.
+  contact:
+    name: Jamii Savings Integration Team
+  version: v1
+servers:
+ -
+  url: https://localhost:8243/jamii/customers/v1
+  description: Local gateway (self-signed certificate)
+tags:
+ -
+  name: customers
+paths:
+  /{customerId}:
+    get:
+      tags:
+       - customers
+      summary: Get a customer profile
+      description: |
+        Returns a filtered view of the customer record. Fields such as
+        password, ssn, bank and crypto details exist upstream and are
+        deliberately not passed through.
+      operationId: getCustomerProfile
+      parameters:
+       -
+        name: customerId
+        in: path
+        description: 1 to 6 digits. Anything else returns 400.
+        required: true
+        style: simple
+        explode: false
+        schema:
+          pattern: "^[0-9]{1,6}$"
+          type: string
+        example: "1"
+       -
+        name: X-Correlation-ID
+        in: header
+        description: "Reused when well formed, otherwise generated."
+        required: false
+        style: simple
+        explode: false
+        schema:
+          type: string
+        example: cust-demo-0001
+      responses:
+        "200":
+          description: Customer found
+          headers:
+            X-Correlation-ID:
+              style: simple
+              explode: false
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+              example:
+                city: Phoenix
+                customerId: 1
+                email: emily.johnson@x.dummyjson.com
+                firstName: Emily
+                lastName: Johnson
+                phone: +81 965-431-3024
+                requestId: cust-demo-0001
+                timestamp: 2026-10-13T11:14:32.187Z
+        "400":
+          description: customerId is not 1 to 6 digits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: customerId must be 1 to 6 digits
+                requestId: 367c4245-e046-4737-a1ae-5ae2dfdec074
+                timestamp: 2026-10-13T11:16:18.644Z
+        "401":
+          description: Missing or invalid access token. Body is produced by the gateway.
+        "404":
+          description: No customer matches the supplied customer id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: CUSTOMER_NOT_FOUND
+                  message: No customer matches the supplied customer id
+                requestId: 32df4a9c-3677-4ef3-a9f1-e75913d2ea5e
+                timestamp: 2026-10-13T11:54:16.182Z
+        "429":
+          description: Subscription throttling tier exhausted. Body is produced by the gateway.
+        "502":
+          description: The customer service returned an unexpected response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The upstream service is unavailable (connection refused)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: BACKEND_UNAVAILABLE
+                  message: The upstream service is unavailable
+                requestId: 52620b50-f830-4295-8120-ab7ddb409494
+                timestamp: 2026-10-13T11:25:01.447Z
+        "504":
+          description: The upstream service did not respond within 3 seconds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: BACKEND_TIMEOUT
+                  message: The upstream service did not respond in time
+                requestId: 10ddcd32-9ab3-4169-b0d9-c000000000aa
+                timestamp: 2026-10-13T11:20:07.975Z
+      security:
+       -
+        OAuth2: []
+       -
+        default: []
+      x-auth-type: Application & Application User
+      x-throttling-tier: Unlimited
+      x-wso2-application-security:
+        security-types:
+         - oauth2
+        optional: false
+components:
+  schemas:
+    CustomerResponse:
+      required:
+       - customerId
+       - firstName
+       - lastName
+       - requestId
+       - timestamp
+      type: object
+      properties:
+        city:
+          type: string
+        customerId:
+          type: integer
+          example: 1
+        email:
+          type: string
+          description: Returned in full to an authorised caller; masked in logs.
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phone:
+          type: string
+          description: Returned in full to an authorised caller; masked in logs.
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    ErrorResponse:
+      required:
+       - error
+       - requestId
+       - timestamp
+      type: object
+      properties:
+        error:
+          required:
+           - code
+           - message
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+      description: |
+        The single error shape used by every Jamii integration, regardless of
+        whether the backend is a database, an HTTP service or a SOAP service.
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      description: "Client credentials grant, issued by the APIM token endpoint."
+      flows:
+        clientCredentials:
+          tokenUrl: https://localhost:9443/oauth2/token
+          scopes: {}
+    default:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://test.com
+          scopes: {}
+x-wso2-auth-header: Authorization
+x-wso2-api-key-header: ApiKey
+x-wso2-cors:
+  corsConfigurationEnabled: false
+  accessControlAllowOrigins:
+   - '*'
+  accessControlAllowCredentials: false
+  accessControlAllowHeaders:
+   - authorization
+   - Access-Control-Allow-Origin
+   - Content-Type
+   - SOAPAction
+   - apikey
+   - Internal-Key
+  accessControlAllowMethods:
+   - GET
+   - PUT
+   - POST
+   - DELETE
+   - PATCH
+   - OPTIONS
+x-wso2-production-endpoints:
+  urls:
+   - http://mi:8290/customers
+  type: http
+x-wso2-sandbox-endpoints:
+  urls:
+   - http://mi:8290/customers
+  type: http
+x-wso2-basePath: /jamii/customers/v1
+x-wso2-transports:
+ - http
+ - https
+x-wso2-application-security:
+  security-types:
+   - oauth2
+  optional: false
+x-wso2-response-cache:
+  enabled: false
+  cacheTimeoutInSeconds: 300

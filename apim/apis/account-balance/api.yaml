@@ -1,0 +1,56 @@
+type: api
+version: v4.6.0
+data:
+  name: JamiiAccountBalance
+  description: |
+    Returns the current balance and status of a Jamii Savings account.
+
+    Backed by a WSO2 Micro Integrator data service over MySQL. The account
+    number is bound as a query parameter and is validated at the gateway edge,
+    so malformed values are rejected before any database call.
+  context: /jamii/accounts
+  version: v1
+  provider: admin
+  lifeCycleStatus: PUBLISHED
+  isRevision: false
+  revisionId: 0
+  type: HTTP
+  transport:
+  - http
+  - https
+  tags:
+  - accounts
+  # Subscription tier. Gold here and on the customer API; the loans API uses a
+  # tighter custom tier because it fronts a shared third-party service.
+  policies:
+  - Gold
+  # OAuth2 for the two internal-channel APIs. The loans API uses api_key.
+  securityScheme:
+  - oauth2
+  visibility: PUBLIC
+  # The custom gateway-level mediation policy, attached declaratively so it
+  # lives in the repo and the pipeline can reapply it, rather than depending
+  # on a click in the Publisher UI that nothing version-controls.
+  operations:
+  - target: /{accountNumber}/balance
+    verb: GET
+    authType: Application & Application User
+    throttlingPolicy: Unlimited
+    operationPolicies:
+      request:
+      - policyName: correlationIdInjector
+        policyVersion: v1
+        parameters: {}
+      response: []
+      fault: []
+  # Defaults only. The real per-environment values come from
+  # apim/params/account-balance-params.yaml at import time, so dev and prod
+  # differ in params rather than in the API definition.
+  endpointConfig:
+    endpoint_type: http
+    production_endpoints:
+      url: http://mi:8290/accounts
+    sandbox_endpoints:
+      url: http://mi:8290/accounts
+  endpointImplementationType: ENDPOINT
+  websubSubscriptionConfiguration: null

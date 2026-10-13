@@ -1,0 +1,253 @@
+openapi: 3.0.3
+info:
+  title: JamiiAccountBalance
+  description: |
+    Returns the current balance and status of a Jamii Savings account.
+
+    Backed by a WSO2 Micro Integrator data service over MySQL. The account
+    number is bound as a query parameter and is validated at the gateway edge,
+    so malformed values are rejected before any database call.
+  contact:
+    name: Jamii Savings Integration Team
+  version: v1
+servers:
+ -
+  url: https://localhost:8243/jamii/accounts/v1
+  description: Local gateway (self-signed certificate)
+tags:
+ -
+  name: accounts
+paths:
+  /{accountNumber}/balance:
+    get:
+      tags:
+       - accounts
+      summary: Get the balance for an account
+      description: |
+        Returns the account's status and balance. A DORMANT or CLOSED account
+        is a successful response carrying that status, not an error.
+      operationId: getAccountBalance
+      parameters:
+       -
+        name: accountNumber
+        in: path
+        description: Exactly 10 digits. Anything else returns 400.
+        required: true
+        style: simple
+        explode: false
+        schema:
+          pattern: "^[0-9]{10}$"
+          type: string
+        example: "1000000001"
+       -
+        name: X-Correlation-ID
+        in: header
+        description: |
+          Reused when it matches `^[A-Za-z0-9-]{8,64}$`; otherwise the
+          gateway injects one and the same value is returned as `requestId`.
+        required: false
+        style: simple
+        explode: false
+        schema:
+          type: string
+        example: demo-req-00001
+      responses:
+        "200":
+          description: Account found
+          headers:
+            X-Correlation-ID:
+              description: Equal to the body's requestId
+              style: simple
+              explode: false
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BalanceResponse"
+              example:
+                accountNumber: "1000000001"
+                balance:
+                  amount: 125430.5
+                  currency: KES
+                requestId: abb08826-70d0-4db0-93a9-df12b53b58f0
+                status: ACTIVE
+                timestamp: 2026-10-13T11:51:15.405Z
+        "400":
+          description: accountNumber is not exactly 10 digits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: accountNumber must be exactly 10 digits
+                requestId: bcffa6ed-9c2c-4398-bd8e-31f4f9bc7f97
+                timestamp: 2026-10-13T11:52:06.362Z
+        "401":
+          description: "Missing or invalid access token. Body is produced by the gateway, not the integration."
+        "404":
+          description: No account matches the supplied account number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: ACCOUNT_NOT_FOUND
+                  message: No account matches the supplied account number
+                requestId: fb6b68ea-a742-4f5d-9e9e-6831b9508b33
+                timestamp: 2026-10-13T11:54:15.359Z
+        "429":
+          description: Subscription throttling tier exhausted. Body is produced by the gateway.
+        "503":
+          description: Account data is temporarily unavailable (database down or pool exhausted)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: DATA_SOURCE_UNAVAILABLE
+                  message: Account data is temporarily unavailable
+                requestId: 691ddc9b-7b44-408e-b0e7-c6ec165919b4
+                timestamp: 2026-10-13T11:55:41.550Z
+        "504":
+          description: The data service did not respond within 5 seconds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+       -
+        OAuth2: []
+       -
+        default: []
+      x-auth-type: Application & Application User
+      x-throttling-tier: Unlimited
+      x-wso2-application-security:
+        security-types:
+         - oauth2
+        optional: false
+components:
+  schemas:
+    BalanceResponse:
+      required:
+       - accountNumber
+       - balance
+       - requestId
+       - status
+       - timestamp
+      type: object
+      properties:
+        accountNumber:
+          pattern: "^[0-9]{10}$"
+          type: string
+          example: "1000000001"
+        balance:
+          required:
+           - amount
+           - currency
+          type: object
+          properties:
+            amount:
+              type: number
+              description: "JSON number, never a string."
+              format: double
+              example: 125430.5
+            currency:
+              type: string
+              example: KES
+        requestId:
+          type: string
+          description: Equal to the X-Correlation-ID response header.
+        status:
+          type: string
+          enum:
+           - ACTIVE
+           - DORMANT
+           - CLOSED
+        timestamp:
+          type: string
+          format: date-time
+    ErrorResponse:
+      required:
+       - error
+       - requestId
+       - timestamp
+      type: object
+      properties:
+        error:
+          required:
+           - code
+           - message
+          type: object
+          properties:
+            code:
+              type: string
+              description: "UPPER_SNAKE_CASE, from a fixed set."
+            message:
+              type: string
+              description: "Safe for clients. Never contains SQL, stack traces, SOAP fault strings or backend hostnames."
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+      description: |
+        The single error shape used by every Jamii integration, regardless of
+        whether the backend is a database, an HTTP service or a SOAP service.
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      description: "Client credentials grant, issued by the APIM token endpoint."
+      flows:
+        clientCredentials:
+          tokenUrl: https://localhost:9443/oauth2/token
+          scopes: {}
+    default:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://test.com
+          scopes: {}
+x-wso2-api-key-header: ApiKey
+x-wso2-cors:
+  corsConfigurationEnabled: false
+  accessControlAllowOrigins:
+   - '*'
+  accessControlAllowCredentials: false
+  accessControlAllowHeaders:
+   - authorization
+   - Access-Control-Allow-Origin
+   - Content-Type
+   - SOAPAction
+   - apikey
+   - Internal-Key
+  accessControlAllowMethods:
+   - GET
+   - PUT
+   - POST
+   - DELETE
+   - PATCH
+   - OPTIONS
+x-wso2-production-endpoints:
+  urls:
+   - http://mi:8290/accounts
+  type: http
+x-wso2-sandbox-endpoints:
+  urls:
+   - http://mi:8290/accounts
+  type: http
+x-wso2-basePath: /jamii/accounts/v1
+x-wso2-transports:
+ - http
+ - https
+x-wso2-application-security:
+  security-types:
+   - oauth2
+  optional: false
+x-wso2-response-cache:
+  enabled: false
+  cacheTimeoutInSeconds: 300

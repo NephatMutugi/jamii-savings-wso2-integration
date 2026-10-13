@@ -1,0 +1,46 @@
+type: api
+version: v4.6.0
+data:
+  name: JamiiLoanEligibility
+  description: |
+    Assesses whether a customer qualifies for a requested loan.
+
+    The REST request is transformed into a SOAP call to the scoring service,
+    whose response is converted back into clean JSON. Callers never see SOAP,
+    and a SOAP Fault is translated into a REST error rather than surfaced as
+    fault XML.
+
+    This API is rate limited more tightly than the others because it fronts a
+    shared third-party scoring service.
+  context: /jamii/loans
+  version: v1
+  provider: admin
+  lifeCycleStatus: PUBLISHED
+  isRevision: false
+  revisionId: 0
+  type: HTTP
+  transport:
+  - http
+  - https
+  tags:
+  - loans
+  # The deliberately different tier: 10 requests/minute. This is the only API
+  # fronting a shared public SOAP service we neither control nor pay for, so
+  # the gateway protects that dependency from our own consumers.
+  # Must exist in APIM before this project is imported.
+  policies:
+  - SoapBackendGuard
+  # API key rather than OAuth2: the expected consumer is a partner broker
+  # integration, not an internal channel.
+  securityScheme:
+  - api_key
+  visibility: PUBLIC
+  # Defaults only; real values come from the params file at import time.
+  endpointConfig:
+    endpoint_type: http
+    production_endpoints:
+      url: http://mi:8290/loans
+    sandbox_endpoints:
+      url: http://mi:8290/loans
+  endpointImplementationType: ENDPOINT
+  websubSubscriptionConfiguration: null

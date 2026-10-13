@@ -1,0 +1,528 @@
+openapi: 3.0.1
+info:
+  title: JamiiCoreBanking
+  version: v1
+servers:
+ -
+  url: /
+security:
+ -
+  default: []
+paths:
+  /{customerId}:
+    get:
+      tags:
+       - customers
+      summary: Get a customer profile
+      description: |
+        Returns a filtered view of the customer record. Fields such as
+        password, ssn, bank and crypto details exist upstream and are
+        deliberately not passed through.
+      operationId: getCustomerProfile
+      parameters:
+       -
+        name: customerId
+        in: path
+        description: 1 to 6 digits. Anything else returns 400.
+        required: true
+        style: simple
+        explode: false
+        schema:
+          pattern: "^[0-9]{1,6}$"
+          type: string
+        example: "1"
+       -
+        name: X-Correlation-ID
+        in: header
+        description: "Reused when well formed, otherwise generated."
+        required: false
+        style: simple
+        explode: false
+        schema:
+          type: string
+        example: cust-demo-0001
+      responses:
+        "200":
+          description: Customer found
+          headers:
+            X-Correlation-ID:
+              style: simple
+              explode: false
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+              example:
+                city: Phoenix
+                customerId: 1
+                email: emily.johnson@x.dummyjson.com
+                firstName: Emily
+                lastName: Johnson
+                phone: +81 965-431-3024
+                requestId: cust-demo-0001
+                timestamp: 2026-10-13T11:14:32.187Z
+        "400":
+          description: customerId is not 1 to 6 digits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: customerId must be 1 to 6 digits
+                requestId: 367c4245-e046-4737-a1ae-5ae2dfdec074
+                timestamp: 2026-10-13T11:16:18.644Z
+        "401":
+          description: Missing or invalid access token. Body is produced by the gateway.
+        "404":
+          description: No customer matches the supplied customer id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: CUSTOMER_NOT_FOUND
+                  message: No customer matches the supplied customer id
+                requestId: 32df4a9c-3677-4ef3-a9f1-e75913d2ea5e
+                timestamp: 2026-10-13T11:54:16.182Z
+        "429":
+          description: Subscription throttling tier exhausted. Body is produced by the gateway.
+        "502":
+          description: The customer service returned an unexpected response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The upstream service is unavailable (connection refused)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: BACKEND_UNAVAILABLE
+                  message: The upstream service is unavailable
+                requestId: 52620b50-f830-4295-8120-ab7ddb409494
+                timestamp: 2026-10-13T11:25:01.447Z
+        "504":
+          description: The upstream service did not respond within 3 seconds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: BACKEND_TIMEOUT
+                  message: The upstream service did not respond in time
+                requestId: 10ddcd32-9ab3-4169-b0d9-c000000000aa
+                timestamp: 2026-10-13T11:20:07.975Z
+      security:
+       -
+        OAuth2: []
+       -
+        default: []
+      x-auth-type: Application & Application User
+      x-throttling-tier: Unlimited
+  /eligibility:
+    post:
+      tags:
+       - loans
+      summary: Check loan eligibility
+      description: |
+        Returns an eligibility decision based on debt-to-income. The monthly
+        instalment is `requestedAmount / termMonths`; the applicant qualifies
+        when instalment plus existing monthly debt is at most 40% of monthly
+        income.
+
+        A decline is a 200 response with `eligible: false`. Only a failure to
+        reach a decision is an error.
+      operationId: checkLoanEligibility
+      parameters:
+       -
+        name: X-Correlation-ID
+        in: header
+        required: false
+        style: simple
+        explode: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EligibilityRequest"
+            example:
+              customerId: 1
+              monthlyDebt: 20000
+              monthlyIncome: 150000
+              requestedAmount: 600000
+              termMonths: 24
+        required: true
+      responses:
+        "200":
+          description: A decision was reached (approve or decline)
+          headers:
+            X-Correlation-ID:
+              style: simple
+              explode: false
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EligibilityResponse"
+              examples:
+                declined:
+                  summary: Debt-to-income limit exceeded
+                  value:
+                    debtToIncomeRatio: 1.2
+                    eligible: false
+                    monthlyInstalment: 50000
+                    reason: DTI_LIMIT_EXCEEDED
+                    requestId: 141a7f6f-2b2c-404e-b191-6d80695f417c
+                    timestamp: 2026-10-13T11:51:23.543Z
+                eligible:
+                  summary: Within the debt-to-income limit
+                  value:
+                    debtToIncomeRatio: 0.3
+                    eligible: true
+                    monthlyInstalment: 25000
+                    reason: WITHIN_DTI_LIMIT
+                    requestId: abb08826-70d0-4db0-93a9-df12b53b58f0
+                    timestamp: 2026-10-13T11:51:15.405Z
+        "400":
+          description: "Body is not valid JSON, or a required field is missing or out of range"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: "monthlyIncome, monthlyDebt, requestedAmount and termMonths are required"
+                requestId: 5264fd97-b6fa-4ef2-acd1-4bfb9acecc2c
+                timestamp: 2026-10-13T11:54:16.199Z
+        "401":
+          description: Missing or invalid API key. Body is produced by the gateway.
+        "422":
+          description: |
+            The scoring service returned a fault and no decision could be
+            reached. The fault detail is logged, never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: ELIGIBILITY_CHECK_REJECTED
+                  message: The eligibility service could not process this request
+                requestId: 68de8a72-a1aa-44f6-8f86-41d52305c67b
+                timestamp: 2026-10-13T12:02:18.075Z
+        "429":
+          description: |
+            Throttling tier exhausted. This API uses a tighter tier than the
+            others to protect the shared scoring service. Body is produced by
+            the gateway.
+        "502":
+          description: The eligibility service returned an unexpected response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The eligibility service is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: The eligibility service did not respond within 5 seconds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+       -
+        ApiKeyAuth: []
+       -
+        default: []
+      x-auth-type: Application & Application User
+      x-throttling-tier: Unlimited
+  /{accountNumber}/balance:
+    get:
+      tags:
+       - accounts
+      summary: Get the balance for an account
+      description: |
+        Returns the account's status and balance. A DORMANT or CLOSED account
+        is a successful response carrying that status, not an error.
+      operationId: getAccountBalance
+      parameters:
+       -
+        name: accountNumber
+        in: path
+        description: Exactly 10 digits. Anything else returns 400.
+        required: true
+        style: simple
+        explode: false
+        schema:
+          pattern: "^[0-9]{10}$"
+          type: string
+        example: "1000000001"
+       -
+        name: X-Correlation-ID
+        in: header
+        description: |
+          Reused when it matches `^[A-Za-z0-9-]{8,64}$`; otherwise the
+          gateway injects one and the same value is returned as `requestId`.
+        required: false
+        style: simple
+        explode: false
+        schema:
+          type: string
+        example: demo-req-00001
+      responses:
+        "200":
+          description: Account found
+          headers:
+            X-Correlation-ID:
+              description: Equal to the body's requestId
+              style: simple
+              explode: false
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BalanceResponse"
+              example:
+                accountNumber: "1000000001"
+                balance:
+                  amount: 125430.5
+                  currency: KES
+                requestId: abb08826-70d0-4db0-93a9-df12b53b58f0
+                status: ACTIVE
+                timestamp: 2026-10-13T11:51:15.405Z
+        "400":
+          description: accountNumber is not exactly 10 digits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: accountNumber must be exactly 10 digits
+                requestId: bcffa6ed-9c2c-4398-bd8e-31f4f9bc7f97
+                timestamp: 2026-10-13T11:52:06.362Z
+        "401":
+          description: "Missing or invalid access token. Body is produced by the gateway, not the integration."
+        "404":
+          description: No account matches the supplied account number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: ACCOUNT_NOT_FOUND
+                  message: No account matches the supplied account number
+                requestId: fb6b68ea-a742-4f5d-9e9e-6831b9508b33
+                timestamp: 2026-10-13T11:54:15.359Z
+        "429":
+          description: Subscription throttling tier exhausted. Body is produced by the gateway.
+        "503":
+          description: Account data is temporarily unavailable (database down or pool exhausted)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: DATA_SOURCE_UNAVAILABLE
+                  message: Account data is temporarily unavailable
+                requestId: 691ddc9b-7b44-408e-b0e7-c6ec165919b4
+                timestamp: 2026-10-13T11:55:41.550Z
+        "504":
+          description: The data service did not respond within 5 seconds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+       -
+        OAuth2: []
+       -
+        default: []
+      x-auth-type: Application & Application User
+      x-throttling-tier: Unlimited
+components:
+  schemas:
+    EligibilityRequest:
+      required:
+       - monthlyDebt
+       - monthlyIncome
+       - requestedAmount
+       - termMonths
+      type: object
+      properties:
+        customerId:
+          type: integer
+          example: 1
+        monthlyDebt:
+          minimum: 0
+          type: number
+          description: Existing monthly debt obligations. May be zero.
+          example: 20000
+        monthlyIncome:
+          minimum: 0
+          exclusiveMinimum: true
+          type: number
+          description: Must be greater than zero.
+          example: 150000
+        requestedAmount:
+          minimum: 0
+          exclusiveMinimum: true
+          type: number
+          example: 600000
+        termMonths:
+          minimum: 1
+          type: integer
+          description: "Must be at least 1, which also prevents a divide-by-zero downstream."
+          example: 24
+    EligibilityResponse:
+      required:
+       - debtToIncomeRatio
+       - eligible
+       - monthlyInstalment
+       - reason
+       - requestId
+       - timestamp
+      type: object
+      properties:
+        debtToIncomeRatio:
+          type: number
+          description: "(instalment + monthlyDebt) / monthlyIncome, rounded to two decimals."
+        eligible:
+          type: boolean
+          description: "JSON boolean, never a string."
+        monthlyInstalment:
+          type: number
+          description: "requestedAmount divided by termMonths, from the scoring service."
+        reason:
+          type: string
+          enum:
+           - WITHIN_DTI_LIMIT
+           - DTI_LIMIT_EXCEEDED
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    ErrorResponse:
+      required:
+       - error
+       - requestId
+       - timestamp
+      type: object
+      properties:
+        error:
+          required:
+           - code
+           - message
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+      description: |
+        The single error shape used by every Jamii integration, regardless of
+        whether the backend is a database, an HTTP service or a SOAP service.
+    BalanceResponse:
+      required:
+       - accountNumber
+       - balance
+       - requestId
+       - status
+       - timestamp
+      type: object
+      properties:
+        accountNumber:
+          pattern: "^[0-9]{10}$"
+          type: string
+          example: "1000000001"
+        balance:
+          required:
+           - amount
+           - currency
+          type: object
+          properties:
+            amount:
+              type: number
+              description: "JSON number, never a string."
+              format: double
+              example: 125430.5
+            currency:
+              type: string
+              example: KES
+        requestId:
+          type: string
+          description: Equal to the X-Correlation-ID response header.
+        status:
+          type: string
+          enum:
+           - ACTIVE
+           - DORMANT
+           - CLOSED
+        timestamp:
+          type: string
+          format: date-time
+    CustomerResponse:
+      required:
+       - customerId
+       - firstName
+       - lastName
+       - requestId
+       - timestamp
+      type: object
+      properties:
+        city:
+          type: string
+        customerId:
+          type: integer
+          example: 1
+        email:
+          type: string
+          description: Returned in full to an authorised caller; masked in logs.
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phone:
+          type: string
+          description: Returned in full to an authorised caller; masked in logs.
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+  securitySchemes:
+    default:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://test.com
+          scopes: {}
+          x-scopes-bindings: {}

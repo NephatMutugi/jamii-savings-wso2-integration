@@ -1,0 +1,14 @@
+<!-- Both branches are present deliberately: the Synapse gateway refuses to
+     deploy a filter that supplies <else> without <then>. Malformed caller
+     values are replaced rather than passed through, which keeps
+     attacker-controlled text out of logs. -->
+<filter source="$trp:X-Correlation-ID" regex="^[A-Za-z0-9-]{8,64}$">
+    <then>
+        <property name="gatewayCorrelationSource" value="caller"/>
+    </then>
+    <else>
+        <property name="gatewayCorrelationSource" value="gateway"/>
+        <property name="X-Correlation-ID" scope="transport"
+                  expression="fn:substring-after(get-property('MessageID'), 'urn:uuid:')"/>
+    </else>
+</filter>

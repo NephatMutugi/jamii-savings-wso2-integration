@@ -1,0 +1,193 @@
+components:
+  schemas:
+    BalanceResponse:
+      properties:
+        accountNumber:
+          example: "1000000001"
+          pattern: ^[0-9]{10}$
+          type: string
+        balance:
+          properties:
+            amount:
+              description: JSON number, never a string.
+              example: 125430.5
+              format: double
+              type: number
+            currency:
+              example: KES
+              type: string
+          required:
+          - amount
+          - currency
+          type: object
+        requestId:
+          description: Equal to the X-Correlation-ID response header.
+          type: string
+        status:
+          enum:
+          - ACTIVE
+          - DORMANT
+          - CLOSED
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+      required:
+      - accountNumber
+      - status
+      - balance
+      - requestId
+      - timestamp
+      type: object
+    ErrorResponse:
+      description: |
+        The single error shape used by every Jamii integration, regardless of
+        whether the backend is a database, an HTTP service or a SOAP service.
+      properties:
+        error:
+          properties:
+            code:
+              description: UPPER_SNAKE_CASE, from a fixed set.
+              type: string
+            message:
+              description: Safe for clients. Never contains SQL, stack traces, SOAP
+                fault strings or backend hostnames.
+              type: string
+          required:
+          - code
+          - message
+          type: object
+        requestId:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+      required:
+      - error
+      - requestId
+      - timestamp
+      type: object
+  securitySchemes:
+    OAuth2:
+      description: Client credentials grant, issued by the APIM token endpoint.
+      flows:
+        clientCredentials:
+          scopes: {}
+          tokenUrl: https://localhost:9443/oauth2/token
+      type: oauth2
+info:
+  contact:
+    name: Jamii Savings Integration Team
+  description: |
+    Returns the current balance and status of a Jamii Savings account.
+
+    Backed by a WSO2 Micro Integrator data service over MySQL. The account
+    number is bound as a query parameter and is validated at the gateway edge,
+    so malformed values are rejected before any database call.
+  title: Jamii Account Balance
+  version: v1
+openapi: 3.0.3
+paths:
+  /{accountNumber}/balance:
+    get:
+      description: |
+        Returns the account's status and balance. A DORMANT or CLOSED account
+        is a successful response carrying that status, not an error.
+      operationId: getAccountBalance
+      parameters:
+      - description: Exactly 10 digits. Anything else returns 400.
+        example: "1000000001"
+        in: path
+        name: accountNumber
+        required: true
+        schema:
+          pattern: ^[0-9]{10}$
+          type: string
+      - description: |
+          Reused when it matches `^[A-Za-z0-9-]{8,64}$`; otherwise the
+          gateway injects one and the same value is returned as `requestId`.
+        example: demo-req-00001
+        in: header
+        name: X-Correlation-ID
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              example:
+                accountNumber: "1000000001"
+                balance:
+                  amount: 125430.5
+                  currency: KES
+                requestId: abb08826-70d0-4db0-93a9-df12b53b58f0
+                status: ACTIVE
+                timestamp: "2026-10-13T11:51:15.405Z"
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+          description: Account found
+          headers:
+            X-Correlation-ID:
+              description: Equal to the body's requestId
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: accountNumber must be exactly 10 digits
+                requestId: bcffa6ed-9c2c-4398-bd8e-31f4f9bc7f97
+                timestamp: "2026-10-13T11:52:06.362Z"
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: accountNumber is not exactly 10 digits
+        "401":
+          description: Missing or invalid access token. Body is produced by the gateway,
+            not the integration.
+        "404":
+          content:
+            application/json:
+              example:
+                error:
+                  code: ACCOUNT_NOT_FOUND
+                  message: No account matches the supplied account number
+                requestId: fb6b68ea-a742-4f5d-9e9e-6831b9508b33
+                timestamp: "2026-10-13T11:54:15.359Z"
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No account matches the supplied account number
+        "429":
+          description: Subscription throttling tier exhausted. Body is produced by
+            the gateway.
+        "503":
+          content:
+            application/json:
+              example:
+                error:
+                  code: DATA_SOURCE_UNAVAILABLE
+                  message: Account data is temporarily unavailable
+                requestId: 691ddc9b-7b44-408e-b0e7-c6ec165919b4
+                timestamp: "2026-10-13T11:55:41.550Z"
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Account data is temporarily unavailable (database down or pool
+            exhausted)
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The data service did not respond within 5 seconds
+      security:
+      - OAuth2: []
+      summary: Get the balance for an account
+      tags:
+      - accounts
+servers:
+- description: Local gateway (self-signed certificate)
+  url: https://localhost:8243/jamii/accounts/v1
+tags:
+- name: accounts

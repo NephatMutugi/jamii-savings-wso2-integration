@@ -1,0 +1,296 @@
+openapi: 3.0.3
+info:
+  title: JamiiLoanEligibility
+  description: |
+    Assesses whether a customer qualifies for a requested loan.
+
+    The REST request is transformed into a SOAP call to the scoring service,
+    whose response is converted back into clean JSON. Callers never see SOAP,
+    and a SOAP Fault is translated into a REST error rather than surfaced as
+    fault XML.
+
+    This API is rate limited more tightly than the others because it fronts a
+    shared third-party scoring service.
+  contact:
+    name: Jamii Savings Integration Team
+  version: v1
+servers:
+ -
+  url: https://localhost:8243/jamii/loans/v1
+  description: Local gateway (self-signed certificate)
+tags:
+ -
+  name: loans
+paths:
+  /eligibility:
+    post:
+      tags:
+       - loans
+      summary: Check loan eligibility
+      description: |
+        Returns an eligibility decision based on debt-to-income. The monthly
+        instalment is `requestedAmount / termMonths`; the applicant qualifies
+        when instalment plus existing monthly debt is at most 40% of monthly
+        income.
+
+        A decline is a 200 response with `eligible: false`. Only a failure to
+        reach a decision is an error.
+      operationId: checkLoanEligibility
+      parameters:
+       -
+        name: X-Correlation-ID
+        in: header
+        required: false
+        style: simple
+        explode: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EligibilityRequest"
+            example:
+              customerId: 1
+              monthlyDebt: 20000
+              monthlyIncome: 150000
+              requestedAmount: 600000
+              termMonths: 24
+        required: true
+      responses:
+        "200":
+          description: A decision was reached (approve or decline)
+          headers:
+            X-Correlation-ID:
+              style: simple
+              explode: false
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EligibilityResponse"
+              examples:
+                declined:
+                  summary: Debt-to-income limit exceeded
+                  value:
+                    debtToIncomeRatio: 1.2
+                    eligible: false
+                    monthlyInstalment: 50000
+                    reason: DTI_LIMIT_EXCEEDED
+                    requestId: 141a7f6f-2b2c-404e-b191-6d80695f417c
+                    timestamp: 2026-10-13T11:51:23.543Z
+                eligible:
+                  summary: Within the debt-to-income limit
+                  value:
+                    debtToIncomeRatio: 0.3
+                    eligible: true
+                    monthlyInstalment: 25000
+                    reason: WITHIN_DTI_LIMIT
+                    requestId: abb08826-70d0-4db0-93a9-df12b53b58f0
+                    timestamp: 2026-10-13T11:51:15.405Z
+        "400":
+          description: "Body is not valid JSON, or a required field is missing or out of range"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: "monthlyIncome, monthlyDebt, requestedAmount and termMonths are required"
+                requestId: 5264fd97-b6fa-4ef2-acd1-4bfb9acecc2c
+                timestamp: 2026-10-13T11:54:16.199Z
+        "401":
+          description: Missing or invalid API key. Body is produced by the gateway.
+        "422":
+          description: |
+            The scoring service returned a fault and no decision could be
+            reached. The fault detail is logged, never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: ELIGIBILITY_CHECK_REJECTED
+                  message: The eligibility service could not process this request
+                requestId: 68de8a72-a1aa-44f6-8f86-41d52305c67b
+                timestamp: 2026-10-13T12:02:18.075Z
+        "429":
+          description: |
+            Throttling tier exhausted. This API uses a tighter tier than the
+            others to protect the shared scoring service. Body is produced by
+            the gateway.
+        "502":
+          description: The eligibility service returned an unexpected response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The eligibility service is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: The eligibility service did not respond within 5 seconds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+       -
+        ApiKeyAuth: []
+       -
+        default: []
+      x-auth-type: Application & Application User
+      x-throttling-tier: Unlimited
+      x-wso2-application-security:
+        security-types:
+         - api_key
+        optional: false
+components:
+  schemas:
+    EligibilityRequest:
+      required:
+       - monthlyDebt
+       - monthlyIncome
+       - requestedAmount
+       - termMonths
+      type: object
+      properties:
+        customerId:
+          type: integer
+          example: 1
+        monthlyDebt:
+          minimum: 0
+          type: number
+          description: Existing monthly debt obligations. May be zero.
+          example: 20000
+        monthlyIncome:
+          minimum: 0
+          exclusiveMinimum: true
+          type: number
+          description: Must be greater than zero.
+          example: 150000
+        requestedAmount:
+          minimum: 0
+          exclusiveMinimum: true
+          type: number
+          example: 600000
+        termMonths:
+          minimum: 1
+          type: integer
+          description: "Must be at least 1, which also prevents a divide-by-zero downstream."
+          example: 24
+    EligibilityResponse:
+      required:
+       - debtToIncomeRatio
+       - eligible
+       - monthlyInstalment
+       - reason
+       - requestId
+       - timestamp
+      type: object
+      properties:
+        debtToIncomeRatio:
+          type: number
+          description: "(instalment + monthlyDebt) / monthlyIncome, rounded to two decimals."
+        eligible:
+          type: boolean
+          description: "JSON boolean, never a string."
+        monthlyInstalment:
+          type: number
+          description: "requestedAmount divided by termMonths, from the scoring service."
+        reason:
+          type: string
+          enum:
+           - WITHIN_DTI_LIMIT
+           - DTI_LIMIT_EXCEEDED
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    ErrorResponse:
+      required:
+       - error
+       - requestId
+       - timestamp
+      type: object
+      properties:
+        error:
+          required:
+           - code
+           - message
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+      description: |
+        The single error shape used by every Jamii integration, regardless of
+        whether the backend is a database, an HTTP service or a SOAP service.
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      description: |
+        API key issued from the Developer Portal. Chosen over OAuth2 for this
+        API because its expected consumer is a partner broker integration
+        rather than an internal channel.
+      name: apikey
+      in: header
+    default:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://test.com
+          scopes: {}
+x-wso2-auth-header: Authorization
+x-wso2-api-key-header: ApiKey
+x-wso2-cors:
+  corsConfigurationEnabled: false
+  accessControlAllowOrigins:
+   - '*'
+  accessControlAllowCredentials: false
+  accessControlAllowHeaders:
+   - authorization
+   - Access-Control-Allow-Origin
+   - Content-Type
+   - SOAPAction
+   - apikey
+   - Internal-Key
+  accessControlAllowMethods:
+   - GET
+   - PUT
+   - POST
+   - DELETE
+   - PATCH
+   - OPTIONS
+x-wso2-production-endpoints:
+  urls:
+   - http://mi:8290/loans
+  type: http
+x-wso2-sandbox-endpoints:
+  urls:
+   - http://mi:8290/loans
+  type: http
+x-wso2-basePath: /jamii/loans/v1
+x-wso2-transports:
+ - http
+ - https
+x-wso2-application-security:
+  security-types:
+   - api_key
+  optional: false
+x-wso2-response-cache:
+  enabled: false
+  cacheTimeoutInSeconds: 300

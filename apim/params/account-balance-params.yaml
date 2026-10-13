@@ -1,0 +1,22 @@
+# Backend endpoints per environment. Kept out of api.yaml so dev and prod
+# differ only here, which is what the pipeline's dev/prod separation needs.
+# `mi` is the compose service name, resolvable from the APIM container on the
+# shared jamii-net network.
+environments:
+  - name: dev
+    configs:
+      endpoints:
+        production:
+          url: http://mi:8290/accounts
+        sandbox:
+          url: http://mi:8290/accounts
+  # Not wired to a real environment. Present so the pipeline's prod stage has
+  # something real to reference, and so promoting means changing params rather
+  # than editing an API definition.
+  - name: prod
+    configs:
+      endpoints:
+        production:
+          url: http://mi-prod:8290/accounts
+        sandbox:
+          url: http://mi-prod:8290/accounts

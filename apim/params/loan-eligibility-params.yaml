@@ -1,0 +1,15 @@
+environments:
+  - name: dev
+    configs:
+      endpoints:
+        production:
+          url: http://mi:8290/loans
+        sandbox:
+          url: http://mi:8290/loans
+  - name: prod
+    configs:
+      endpoints:
+        production:
+          url: http://mi-prod:8290/loans
+        sandbox:
+          url: http://mi-prod:8290/loans
