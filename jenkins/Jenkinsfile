@@ -163,8 +163,14 @@ pipeline {
                         echo "DELIBERATE FAILURE: corrupting the tier reference in ${params.BREAK_API}"
                         sh "sed -i 's/^  - Gold\$/  - NoSuchTierDeliberateFailure/; s/^  - SoapBackendGuard\$/  - NoSuchTierDeliberateFailure/' apim/apis/${params.BREAK_API}/api.yaml"
                     }
-                    publishApim('dev', APIS)
+                    // Marked BEFORE the imports run, not after. APIM is
+                    // updated one API at a time, so a failure on the third
+                    // leaves the first two already changed. Marking on
+                    // success would skip the APIM rollback in exactly the
+                    // case that needs it, which is the partial deploy this
+                    // pipeline exists to prevent.
                     deployedSteps << 'apim:dev'
+                    publishApim('dev', APIS)
                 }
             }
         }
@@ -303,13 +309,17 @@ def rollback(List steps, List apis) {
     }
 
     if (steps.contains('apim:dev')) {
-        echo 'ROLLBACK: re-importing the APIs captured in the pre-deploy snapshot'
+        echo 'ROLLBACK: restoring all three APIs. Imports run one at a time, so some may have succeeded before the failure; all are restored rather than guessing which.'
+        // Undo any corruption applied to the working copy (the BREAK_API
+        // demo edits api.yaml in place) so the re-import uses the committed
+        // definitions rather than the broken ones.
         sh 'git checkout -- apim/apis || true'
         apis.each { api ->
             sh """
                 apictl import api -f apim/apis/${api} -e dev \
-                  --params apim/params/${api}-params.yaml --update -k || \
-                  echo 'ROLLBACK: could not restore ${api}'
+                  --params apim/params/${api}-params.yaml --update -k \
+                  && echo 'ROLLBACK: restored ${api}' \
+                  || echo 'ROLLBACK FAILED for ${api}: this API may be left on the failed version and needs manual attention'
             """
         }
     }
