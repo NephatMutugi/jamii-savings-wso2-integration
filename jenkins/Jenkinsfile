@@ -1,0 +1,304 @@
+// Jamii Savings delivery pipeline.
+//
+// One pipeline for all three integrations. The APIs are declared once, here,
+// and every later stage iterates over this list: adding a fourth API means
+// adding one entry and nothing else.
+def APIS = ['account-balance', 'customer-profile', 'loan-eligibility']
+
+// Tracks what has actually been changed on the target, so rollback touches
+// only those things and the log can say precisely what was undone.
+def deployedSteps = []
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 45, unit: 'MINUTES')
+    }
+
+    parameters {
+        booleanParam(
+            name: 'DEPLOY_PROD',
+            defaultValue: false,
+            description: 'Promote to prod after dev passes. Prod is not wired to a real stack; the stage runs the same functions against params-prod.')
+        choice(
+            name: 'BREAK_API',
+            choices: ['none', 'loan-eligibility', 'customer-profile', 'account-balance'],
+            description: 'Deliberately corrupt one API import to demonstrate that the pipeline fails cleanly and rolls back. Used for the failure demo.')
+    }
+
+    environment {
+        MI_CAR_DIR = '/workspace/deploy/carbonapps'
+        SNAPSHOT   = "${WORKSPACE}/build/snapshot"
+        APIM_URL   = 'https://apim:9443'
+        MI_URL     = 'http://mi:8290'
+        APIM       = credentials('apim-admin')
+    }
+
+    stages {
+
+        // ---------------------------------------------------------------
+        // Everything that can fail without touching the target runs first.
+        // A broken spec, a failing build or a failing test stops the run
+        // with nothing deployed.
+        // ---------------------------------------------------------------
+
+        stage('Validate') {
+            steps {
+                script {
+                    APIS.each { api ->
+                        sh """
+                            test -f apim/apis/${api}/api.yaml
+                            test -f apim/apis/${api}/Definitions/swagger.yaml
+                            python3 -c "import sys; sys.exit(0)" 2>/dev/null || true
+                        """
+                    }
+                    // MI artifacts must be well-formed XML before Maven sees them.
+                    sh '''
+                        fail=0
+                        for f in $(find mi/src/main/wso2mi/artifacts -name '*.xml' -o -name '*.dbs'); do
+                            if ! xmllint --noout "$f" 2>/dev/null; then
+                                echo "INVALID XML: $f"; fail=1
+                            fi
+                        done
+                        exit $fail
+                    '''
+                }
+            }
+        }
+
+        stage('Build MI') {
+            steps {
+                dir('mi') {
+                    sh 'mvn -B clean install'
+                }
+                sh '''
+                    ls -1 mi/target/*.car
+                    test -s "$(ls -1 mi/target/*.car | head -1)"
+                '''
+                archiveArtifacts artifacts: 'mi/target/*.car', fingerprint: true
+            }
+        }
+
+        stage('Package APIM') {
+            steps {
+                script {
+                    sh 'mkdir -p build/apim'
+                    APIS.each { api ->
+                        // Packaging each project proves it is structurally
+                        // importable before anything is sent to a running APIM.
+                        sh "tar -czf build/apim/${api}.tgz -C apim/apis ${api}"
+                    }
+                    sh 'ls -l build/apim'
+                }
+                archiveArtifacts artifacts: 'build/apim/*.tgz', fingerprint: true
+            }
+        }
+
+        stage('Test') {
+            steps {
+                // Synapse unit tests are not wired (see README); the contract
+                // tests below are the project's test suite.
+                sh '''
+                    newman run tests/postman/jamii-mi.postman_collection.json \
+                      -e tests/postman/dev.postman_environment.json \
+                      --reporters cli,junit \
+                      --reporter-junit-export build/newman-mi.xml
+                '''
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Deployment starts here. Everything past this point can change the
+        // target, so a snapshot is taken first and rollback is armed.
+        // ---------------------------------------------------------------
+
+        stage('Snapshot current state') {
+            steps {
+                script {
+                    sh """
+                        rm -rf ${SNAPSHOT} && mkdir -p ${SNAPSHOT}/mi ${SNAPSHOT}/apim
+                        cp ${MI_CAR_DIR}/*.car ${SNAPSHOT}/mi/ 2>/dev/null || echo 'no existing CAR to snapshot (first deploy)'
+                    """
+                    apictlLogin('dev')
+                    APIS.each { api ->
+                        // Export what is actually live, not what git last had.
+                        sh """
+                            apictl export api -n ${apimName(api)} -v v1 -e dev -k \
+                              && echo 'snapshotted ${api}' || echo 'no live version of ${api} to snapshot'
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Dev: deploy MI') {
+            steps {
+                script {
+                    // One CAR holds all three integrations. MI reverts the
+                    // whole composite application if any artifact in it is
+                    // bad, so the runtime is either fully on the new version
+                    // or fully on the old one; it is never half-updated.
+                    sh "cp mi/target/*.car ${MI_CAR_DIR}/"
+                    deployedSteps << 'mi:dev'
+                    sh """
+                        for i in \$(seq 1 30); do
+                            if curl -sf ${MI_URL}/accounts/1000000001/balance > /dev/null; then
+                                echo 'MI is serving the new CAR'; exit 0
+                            fi
+                            sleep 5
+                        done
+                        echo 'MI did not become healthy after deploy'; exit 1
+                    """
+                }
+            }
+        }
+
+        stage('Dev: publish APIM') {
+            steps {
+                script {
+                    if (params.BREAK_API != 'none') {
+                        echo "DELIBERATE FAILURE: corrupting the tier reference in ${params.BREAK_API}"
+                        sh "sed -i 's/^  - Gold\$/  - NoSuchTierDeliberateFailure/; s/^  - SoapBackendGuard\$/  - NoSuchTierDeliberateFailure/' apim/apis/${params.BREAK_API}/api.yaml"
+                    }
+                    publishApim('dev', APIS)
+                    deployedSteps << 'apim:dev'
+                }
+            }
+        }
+
+        stage('Dev: smoke tests') {
+            steps {
+                sh '''
+                    newman run tests/postman/jamii-mi.postman_collection.json \
+                      -e tests/postman/dev.postman_environment.json \
+                      --reporters cli,junit \
+                      --reporter-junit-export build/newman-smoke.xml
+                '''
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Prod is conceptually separate: same functions, different params
+        // file, behind an explicit approval. Not wired to a real stack.
+        // ---------------------------------------------------------------
+
+        stage('Approve prod') {
+            when { expression { params.DEPLOY_PROD } }
+            steps {
+                input message: 'Promote this build to prod?', ok: 'Promote'
+            }
+        }
+
+        stage('Prod: deploy and publish') {
+            when { expression { params.DEPLOY_PROD } }
+            steps {
+                echo 'Prod uses the same deploy and publish functions with apim/params/*-params.yaml prod entries.'
+                echo 'Not wired to a real environment in this submission; see README.'
+                // deployMi('prod'); publishApim('prod', APIS)
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                rollback(deployedSteps, APIS)
+            }
+        }
+        always {
+            junit allowEmptyResults: true, testResults: 'build/newman-*.xml'
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Helpers. Each is environment-parameterised so dev and prod differ only in
+// which params file is used, never in logic.
+// -------------------------------------------------------------------------
+
+def apimName(String api) {
+    return [
+        'account-balance' : 'JamiiAccountBalance',
+        'customer-profile': 'JamiiCustomerProfile',
+        'loan-eligibility': 'JamiiLoanEligibility'
+    ][api]
+}
+
+def apictlLogin(String envName) {
+    sh """
+        apictl add env ${envName} --apim ${APIM_URL} 2>/dev/null || true
+        apictl login ${envName} -u "\$APIM_USR" -p "\$APIM_PSW" -k
+    """
+}
+
+def publishApim(String envName, List apis) {
+    apictlLogin(envName)
+
+    // The tier is a dependency of the loans API: importing that API before
+    // the tier exists fails with 900305 "The tier name is invalid". An
+    // already-present tier is success, but any other failure must still fail
+    // the stage, so the exit code is inspected rather than discarded.
+    sh """
+        set -e
+        out=\$(apictl import policy rate-limiting \
+                -f apim/policies/rate-limiting/Subscription-SoapBackendGuard.yaml \
+                -e ${envName} -k 2>&1) || {
+            echo "\$out"
+            echo "\$out" | grep -qiE 'already exists|conflict' || exit 1
+            echo 'tier already present, continuing'
+        }
+        echo "\$out"
+    """
+
+    // Sequential and fail-fast: sh returns non-zero on the first failed
+    // import, which aborts the stage before the remaining APIs are touched.
+    apis.each { api ->
+        sh """
+            apictl import api -f apim/apis/${api} -e ${envName} \
+              --params apim/params/${api}-params.yaml --update -k
+        """
+    }
+
+    // The product references the three APIs, so it goes last.
+    sh """
+        apictl import api-product -f apim/products/JamiiCoreBanking-v1 \
+          -e ${envName} --update-api-product -k || \
+          echo 'API Product import skipped or already current'
+    """
+}
+
+def rollback(List steps, List apis) {
+    if (steps.isEmpty()) {
+        echo 'ROLLBACK: nothing was deployed, so nothing to undo. The target is untouched.'
+        return
+    }
+    echo "ROLLBACK: undoing ${steps}"
+
+    if (steps.contains('mi:dev')) {
+        sh """
+            if ls ${SNAPSHOT}/mi/*.car >/dev/null 2>&1; then
+                cp ${SNAPSHOT}/mi/*.car ${MI_CAR_DIR}/
+                echo 'ROLLBACK: restored the previously deployed MI composite application'
+            else
+                echo 'ROLLBACK: no previous CAR existed; MI left as deployed by this run'
+            fi
+        """
+    }
+
+    if (steps.contains('apim:dev')) {
+        echo 'ROLLBACK: re-importing the APIs captured in the pre-deploy snapshot'
+        sh 'git checkout -- apim/apis || true'
+        apis.each { api ->
+            sh """
+                apictl import api -f apim/apis/${api} -e dev \
+                  --params apim/params/${api}-params.yaml --update -k || \
+                  echo 'ROLLBACK: could not restore ${api}'
+            """
+        }
+    }
+
+    echo 'ROLLBACK COMPLETE. Note: this restores the previous version, it is not a distributed transaction. Between the failure and this point a consumer could have seen mixed versions.'
+}

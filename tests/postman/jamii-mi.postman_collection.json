@@ -1,0 +1,164 @@
+{
+  "info": {
+    "name": "Jamii MI contract tests",
+    "description": "Contract tests for the three integrations, run directly against MI so they need no gateway credentials and never block the pipeline on key rotation. Error-path tests assert the shared envelope, which is the cross-cutting requirement that a database, an HTTP service and a SOAP service all produce the same error shape.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1a balance: active account",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "X-Correlation-ID", "value": "ci-balance-ok-001" }],
+        "url": { "raw": "{{miUrl}}/accounts/1000000001/balance", "host": ["{{miUrl}}"], "path": ["accounts", "1000000001", "balance"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "const b = pm.response.json();",
+          "pm.test('accountNumber echoed', () => pm.expect(b.accountNumber).to.eql('1000000001'));",
+          "pm.test('status is a valid enum value', () => pm.expect(['ACTIVE','DORMANT','CLOSED']).to.include(b.status));",
+          "pm.test('amount is a JSON number, not a string', () => pm.expect(b.balance.amount).to.be.a('number'));",
+          "pm.test('currency is KES', () => pm.expect(b.balance.currency).to.eql('KES'));",
+          "pm.test('caller correlation id is reused', () => pm.expect(b.requestId).to.eql('ci-balance-ok-001'));",
+          "pm.test('correlation header matches body', () => pm.expect(pm.response.headers.get('X-Correlation-ID')).to.eql(b.requestId));",
+          "pm.test('timestamp is ISO-8601', () => pm.expect(b.timestamp).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/));"
+        ]}
+      }]
+    },
+    {
+      "name": "1a balance: closed account still succeeds",
+      "request": {
+        "method": "GET", "header": [],
+        "url": { "raw": "{{miUrl}}/accounts/1000000003/balance", "host": ["{{miUrl}}"], "path": ["accounts", "1000000003", "balance"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('200, because account state is data not an error', () => pm.response.to.have.status(200));",
+          "pm.test('status is CLOSED', () => pm.expect(pm.response.json().status).to.eql('CLOSED'));"
+        ]}
+      }]
+    },
+    {
+      "name": "1a balance: unknown account is 404",
+      "request": {
+        "method": "GET", "header": [],
+        "url": { "raw": "{{miUrl}}/accounts/9999999999/balance", "host": ["{{miUrl}}"], "path": ["accounts", "9999999999", "balance"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('404', () => pm.response.to.have.status(404));",
+          "const b = pm.response.json();",
+          "pm.test('ACCOUNT_NOT_FOUND', () => pm.expect(b.error.code).to.eql('ACCOUNT_NOT_FOUND'));",
+          "pm.test('error envelope keys', () => pm.expect(Object.keys(b).sort()).to.eql(['error','requestId','timestamp']));"
+        ]}
+      }]
+    },
+    {
+      "name": "1a balance: malformed account number is 400 not 500",
+      "request": {
+        "method": "GET", "header": [],
+        "url": { "raw": "{{miUrl}}/accounts/abc/balance", "host": ["{{miUrl}}"], "path": ["accounts", "abc", "balance"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('400', () => pm.response.to.have.status(400));",
+          "pm.test('INVALID_REQUEST', () => pm.expect(pm.response.json().error.code).to.eql('INVALID_REQUEST'));"
+        ]}
+      }]
+    },
+    {
+      "name": "1b customer: profile is projected, secrets are not passed through",
+      "request": {
+        "method": "GET", "header": [],
+        "url": { "raw": "{{miUrl}}/customers/1", "host": ["{{miUrl}}"], "path": ["customers", "1"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "const b = pm.response.json();",
+          "pm.test('projection fields present', () => { ['customerId','firstName','lastName','email','phone','city'].forEach(k => pm.expect(b).to.have.property(k)); });",
+          "pm.test('upstream secrets are absent', () => { ['password','ssn','bank','crypto','ein','macAddress'].forEach(k => pm.expect(b).to.not.have.property(k)); });",
+          "pm.test('no upstream Server header leaks', () => pm.expect(pm.response.headers.get('Server')).to.be.oneOf([null, undefined]));"
+        ]}
+      }]
+    },
+    {
+      "name": "1b customer: unknown customer is 404",
+      "request": {
+        "method": "GET", "header": [],
+        "url": { "raw": "{{miUrl}}/customers/999999", "host": ["{{miUrl}}"], "path": ["customers", "999999"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('404', () => pm.response.to.have.status(404));",
+          "const b = pm.response.json();",
+          "pm.test('CUSTOMER_NOT_FOUND', () => pm.expect(b.error.code).to.eql('CUSTOMER_NOT_FOUND'));",
+          "pm.test('same envelope as the DB-backed API', () => pm.expect(Object.keys(b).sort()).to.eql(['error','requestId','timestamp']));"
+        ]}
+      }]
+    },
+    {
+      "name": "1c loans: eligible applicant",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\"customerId\":1,\"monthlyIncome\":150000,\"monthlyDebt\":20000,\"requestedAmount\":600000,\"termMonths\":24}" },
+        "url": { "raw": "{{miUrl}}/loans/eligibility", "host": ["{{miUrl}}"], "path": ["loans", "eligibility"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('200', () => pm.response.to.have.status(200));",
+          "const b = pm.response.json();",
+          "pm.test('eligible is a boolean', () => pm.expect(b.eligible).to.be.a('boolean'));",
+          "pm.test('instalment comes from the SOAP service', () => pm.expect(b.monthlyInstalment).to.eql(25000));",
+          "pm.test('ratio is a number', () => pm.expect(b.debtToIncomeRatio).to.be.a('number'));",
+          "pm.test('no XML leaked into the JSON response', () => pm.expect(pm.response.text()).to.not.include('<'));"
+        ]}
+      }]
+    },
+    {
+      "name": "1c loans: declined applicant is still a 200",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\"customerId\":1,\"monthlyIncome\":50000,\"monthlyDebt\":10000,\"requestedAmount\":600000,\"termMonths\":12}" },
+        "url": { "raw": "{{miUrl}}/loans/eligibility", "host": ["{{miUrl}}"], "path": ["loans", "eligibility"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('200, a business decline is not an error', () => pm.response.to.have.status(200));",
+          "const b = pm.response.json();",
+          "pm.test('not eligible', () => pm.expect(b.eligible).to.eql(false));",
+          "pm.test('reason explains why', () => pm.expect(b.reason).to.eql('DTI_LIMIT_EXCEEDED'));"
+        ]}
+      }]
+    },
+    {
+      "name": "1c loans: missing fields are 400 not 500",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\"customerId\":1}" },
+        "url": { "raw": "{{miUrl}}/loans/eligibility", "host": ["{{miUrl}}"], "path": ["loans", "eligibility"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "type": "text/javascript", "exec": [
+          "pm.test('400', () => pm.response.to.have.status(400));",
+          "const b = pm.response.json();",
+          "pm.test('INVALID_REQUEST', () => pm.expect(b.error.code).to.eql('INVALID_REQUEST'));",
+          "pm.test('same envelope as the DB and HTTP backed APIs', () => pm.expect(Object.keys(b).sort()).to.eql(['error','requestId','timestamp']));"
+        ]}
+      }]
+    }
+  ]
+}

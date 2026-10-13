@@ -121,8 +121,29 @@ services:
     networks:
       - jamii-net
 
+  # Behind a profile so the day-to-day stack stays light:
+  #   docker compose --profile ci up -d jenkins
+  jenkins:
+    profiles: ["ci"]
+    build:
+      context: ./jenkins
+    container_name: jamii-jenkins
+    restart: unless-stopped
+    ports:
+      - "8081:8080"   # 8080 is WireMock's
+      - "50000:50000"
+    volumes:
+      - jenkins-home:/var/jenkins_home
+      # The repo itself. The pipeline builds from a clone of this git repo and
+      # deploys by writing the built CAR into deploy/carbonapps, which MI
+      # watches through its own bind mount.
+      - ./:/workspace
+    networks:
+      - jamii-net
+
 volumes:
   jamii-db-data:
+  jenkins-home:
 
 networks:
   jamii-net:

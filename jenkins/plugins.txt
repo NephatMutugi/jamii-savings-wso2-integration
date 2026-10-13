@@ -1,0 +1,10 @@
+# Plugins baked into the image so the pipeline does not depend on the setup
+# wizard downloading them. workflow-aggregator and git are mandatory: without
+# them there is no Pipeline job type and no "Pipeline script from SCM".
+workflow-aggregator
+git
+credentials-binding
+junit
+timestamper
+pipeline-stage-view
+ws-cleanup
