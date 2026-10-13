@@ -15,7 +15,6 @@ mi/deployment/libs/*.jar
 node_modules/
 *.log
 
-# AI-assisted workflow files: kept locally, not published
 .claude/
 CLAUDE.md
 requirements.md
