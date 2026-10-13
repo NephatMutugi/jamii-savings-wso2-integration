@@ -238,19 +238,23 @@ def publishApim(String envName, List apis) {
     apictlLogin(envName)
 
     // The tier is a dependency of the loans API: importing that API before
-    // the tier exists fails with 900305 "The tier name is invalid". An
-    // already-present tier is success, but any other failure must still fail
-    // the stage, so the exit code is inspected rather than discarded.
+    // the tier exists fails with 900305 "The tier name is invalid". A tier
+    // that already exists is success; anything else must still fail the
+    // stage, so only HTTP 409 is tolerated and every other error propagates.
+    // apictl reports an existing policy as "Status: 409" with no prose, so
+    // matching on wording like "already exists" does not work.
     sh """
-        set -e
         out=\$(apictl import policy rate-limiting \
                 -f apim/policies/rate-limiting/Subscription-SoapBackendGuard.yaml \
-                -e ${envName} -k 2>&1) || {
-            echo "\$out"
-            echo "\$out" | grep -qiE 'already exists|conflict' || exit 1
-            echo 'tier already present, continuing'
-        }
+                -e ${envName} -k 2>&1) && rc=0 || rc=\$?
         echo "\$out"
+        if [ \$rc -ne 0 ]; then
+            echo "\$out" | grep -qE '(Status|Reason): 409' || {
+                echo 'Throttling tier import failed for a reason other than it already existing.'
+                exit \$rc
+            }
+            echo 'Tier already present (HTTP 409), continuing.'
+        fi
     """
 
     // Sequential and fail-fast: sh returns non-zero on the first failed
@@ -262,11 +266,21 @@ def publishApim(String envName, List apis) {
         """
     }
 
-    // The product references the three APIs, so it goes last.
+    // The product references the three APIs, so it goes last. Same rule as
+    // the tier: tolerate "already exists", fail on anything else. A blanket
+    // "|| echo" here would be precisely the silent partial deploy this
+    // pipeline is supposed to prevent.
     sh """
-        apictl import api-product -f apim/products/JamiiCoreBanking-v1 \
-          -e ${envName} --update-api-product -k || \
-          echo 'API Product import skipped or already current'
+        out=\$(apictl import api-product -f apim/products/JamiiCoreBanking-v1 \
+                -e ${envName} --update-api-product -k 2>&1) && rc=0 || rc=\$?
+        echo "\$out"
+        if [ \$rc -ne 0 ]; then
+            echo "\$out" | grep -qE '(Status|Reason): 409' || {
+                echo 'API Product import failed.'
+                exit \$rc
+            }
+            echo 'API Product already present (HTTP 409), continuing.'
+        fi
     """
 }
 
