@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<api context="/loans" name="LoansAPI" xmlns="http://ws.apache.org/ns/synapse">
+    <resource methods="POST" uri-template="/eligibility">
+        <inSequence>
+            <sequence key="Common_InFlow"/>
+
+            <property name="customerId" expression="json-eval($.customerId)"/>
+            <property name="monthlyIncome" expression="json-eval($.monthlyIncome)"/>
+            <property name="monthlyDebt" expression="json-eval($.monthlyDebt)"/>
+            <property name="requestedAmount" expression="json-eval($.requestedAmount)"/>
+            <property name="termMonths" expression="json-eval($.termMonths)"/>
+
+            <!-- Presence check. A body that is not valid JSON at all fails
+                 earlier, during message building, and is classified as 400 by
+                 Common_Fault. -->
+            <filter xpath="not(boolean($ctx:monthlyIncome)) or not(boolean($ctx:monthlyDebt)) or not(boolean($ctx:requestedAmount)) or not(boolean($ctx:termMonths))">
+                <then>
+                    <property name="ERR_HTTP" value="400"/>
+                    <property name="ERR_CODE" value="INVALID_REQUEST"/>
+                    <property name="ERR_MSG" value="monthlyIncome, monthlyDebt, requestedAmount and termMonths are required"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </then>
+            </filter>
+
+            <!-- Range check. number() yields NaN for non-numeric input and
+                 every NaN comparison is false, so bad types land here too.
+                 A zero monthlyIncome or termMonths is rejected before the
+                 call, which is also what stops the SOAP service ever being
+                 asked to divide by zero. -->
+            <filter xpath="not(number($ctx:monthlyIncome) &gt; 0) or not(number($ctx:requestedAmount) &gt; 0) or not(number($ctx:termMonths) &gt;= 1) or not(number($ctx:monthlyDebt) &gt;= 0)">
+                <then>
+                    <property name="ERR_HTTP" value="400"/>
+                    <property name="ERR_CODE" value="INVALID_REQUEST"/>
+                    <property name="ERR_MSG" value="monthlyIncome, requestedAmount and termMonths must be positive numbers and monthlyDebt must not be negative"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </then>
+            </filter>
+
+            <!-- The service takes integers. round() alone can render as
+                 "600000.0", which the integer-typed intA would reject, so the
+                 decimal part is trimmed with core XPath 1.0 functions. -->
+            <property name="amountInt"
+                      expression="substring-before(concat(round(number($ctx:requestedAmount)), '.'), '.')"/>
+            <property name="termInt"
+                      expression="substring-before(concat(round(number($ctx:termMonths)), '.'), '.')"/>
+
+            <log level="custom" category="INFO">
+                <property name="event" value="BACKEND_CALL"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="backend" value="CalculatorSoap"/>
+                <property name="customerId" expression="$ctx:customerId"/>
+            </log>
+
+            <!-- Only the operation element: the endpoint's format="soap11"
+                 adds the envelope. Building a full envelope here as well
+                 would nest one inside the other. -->
+            <payloadFactory media-type="xml">
+                <format>
+                    <tem:Divide xmlns:tem="http://tempuri.org/">
+                        <tem:intA>$1</tem:intA>
+                        <tem:intB>$2</tem:intB>
+                    </tem:Divide>
+                </format>
+                <args>
+                    <arg evaluator="xml" expression="$ctx:amountInt"/>
+                    <arg evaluator="xml" expression="$ctx:termInt"/>
+                </args>
+            </payloadFactory>
+            <property name="messageType" value="text/xml" scope="axis2"/>
+            <header name="Action" value="http://tempuri.org/Divide"/>
+
+            <call>
+                <endpoint key="CalculatorSoapEP"/>
+            </call>
+
+            <log level="custom" category="INFO">
+                <property name="event" value="BACKEND_RESPONSE"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="backendStatus" expression="$axis2:HTTP_SC"/>
+            </log>
+
+            <!-- Fault detection comes before result parsing: a Fault envelope
+                 has no DivideResult, so parsing first would misreport it as a
+                 malformed response. -->
+            <filter xpath="boolean(//*[local-name()='Fault'])">
+                <then>
+                    <!-- The fault string is logged for operators and never
+                         returned. The client gets a code, not backend XML. -->
+                    <log level="custom" category="WARN">
+                        <property name="event" value="SOAP_FAULT"/>
+                        <property name="requestId" expression="$ctx:requestId"/>
+                        <property name="faultCode" expression="//*[local-name()='faultcode']"/>
+                        <property name="faultString" expression="//*[local-name()='faultstring']"/>
+                    </log>
+                    <property name="ERR_HTTP" value="422"/>
+                    <property name="ERR_CODE" value="ELIGIBILITY_CHECK_REJECTED"/>
+                    <property name="ERR_MSG" value="The eligibility service could not process this request"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </then>
+            </filter>
+
+            <property name="instalment" expression="//*[local-name()='DivideResult']"/>
+            <filter xpath="not(boolean($ctx:instalment))">
+                <then>
+                    <property name="ERR_HTTP" value="502"/>
+                    <property name="ERR_CODE" value="BACKEND_ERROR"/>
+                    <property name="ERR_MSG" value="The eligibility service returned an unexpected response"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </then>
+            </filter>
+
+            <!-- Debt-to-income: instalment plus existing debt against income,
+                 rounded to two decimals. -->
+            <property name="dti"
+                      expression="round(((number($ctx:instalment) + number($ctx:monthlyDebt)) div number($ctx:monthlyIncome)) * 100) div 100"/>
+            <filter xpath="number($ctx:dti) &lt;= 0.4">
+                <then>
+                    <property name="eligible" value="true"/>
+                    <property name="reason" value="WITHIN_DTI_LIMIT"/>
+                </then>
+                <else>
+                    <property name="eligible" value="false"/>
+                    <property name="reason" value="DTI_LIMIT_EXCEEDED"/>
+                </else>
+            </filter>
+
+            <property name="responseTimestamp"
+                      expression="get-property('SYSTEM_DATE', &quot;yyyy-MM-dd'T'HH:mm:ss.SSSXXX&quot;)"/>
+            <!-- $1 to $3 unquoted: eligible is a JSON boolean, the other two
+                 are JSON numbers. -->
+            <payloadFactory media-type="json">
+                <format>{"eligible":$1,"monthlyInstalment":$2,"debtToIncomeRatio":$3,"reason":"$4","requestId":"$5","timestamp":"$6"}</format>
+                <args>
+                    <arg evaluator="xml" expression="$ctx:eligible"/>
+                    <arg evaluator="xml" expression="$ctx:instalment"/>
+                    <arg evaluator="xml" expression="$ctx:dti"/>
+                    <arg evaluator="xml" expression="$ctx:reason"/>
+                    <arg evaluator="xml" expression="$ctx:requestId"/>
+                    <arg evaluator="xml" expression="$ctx:responseTimestamp"/>
+                </args>
+            </payloadFactory>
+
+            <property name="TRANSPORT_HEADERS" action="remove" scope="axis2"/>
+            <header name="X-Correlation-ID" scope="transport" expression="$ctx:requestId"/>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="ContentType" value="application/json" scope="axis2"/>
+            <log level="custom" category="INFO">
+                <property name="event" value="RESPONSE_OUT"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="status" value="200"/>
+                <property name="customerId" expression="$ctx:customerId"/>
+                <property name="eligible" expression="$ctx:eligible"/>
+            </log>
+            <respond/>
+        </inSequence>
+        <faultSequence>
+            <sequence key="Common_Fault"/>
+        </faultSequence>
+    </resource>
+</api>

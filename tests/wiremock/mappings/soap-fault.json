@@ -1,0 +1,14 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "urlPattern": "/calculator.asmx.*"
+  },
+  "response": {
+    "status": 500,
+    "headers": {
+      "Content-Type": "text/xml; charset=utf-8"
+    },
+    "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><soap:Fault><faultcode>soap:Server</faultcode><faultstring>Scoring engine unavailable for this customer segment</faultstring><detail><internalRef>SCORE-ENGINE-7781</internalRef></detail></soap:Fault></soap:Body></soap:Envelope>"
+  }
+}

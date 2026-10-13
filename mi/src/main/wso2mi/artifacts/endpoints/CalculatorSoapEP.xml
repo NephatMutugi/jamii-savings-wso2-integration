@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<endpoint name="CalculatorSoapEP" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- format="soap11" makes MI wrap the payload in a SOAP 1.1 envelope, so
+         LoansAPI only builds the operation element itself.
+
+         To demonstrate the SOAP Fault path, point this at the stub and
+         rebuild (the live service does not fault for valid input):
+             uri="http://www.dneonline.com/calculator.asmx" -->
+    <address uri="http://www.dneonline.com/calculator.asmx" format="soap11">
+        <timeout>
+            <duration>5000</duration>
+            <responseAction>fault</responseAction>
+        </timeout>
+        <!-- Suspension disabled, as on the other endpoints: one failed call
+             must not make every later call fail. -->
+        <suspendOnFailure>
+            <errorCodes>-1</errorCodes>
+            <initialDuration>0</initialDuration>
+            <progressionFactor>1.0</progressionFactor>
+            <maximumDuration>0</maximumDuration>
+        </suspendOnFailure>
+        <markForSuspension>
+            <errorCodes>-1</errorCodes>
+        </markForSuspension>
+    </address>
+</endpoint>
