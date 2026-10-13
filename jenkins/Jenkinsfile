@@ -265,10 +265,16 @@ def publishApim(String envName, List apis) {
 
     // Sequential and fail-fast: sh returns non-zero on the first failed
     // import, which aborts the stage before the remaining APIs are touched.
+    //
+    // --rotate-revision is required for a pipeline that runs repeatedly.
+    // Each import creates a new API revision and APIM caps them (5 by
+    // default), after which every import fails with
+    // "900351 Maximum number of revisions per API has reached".
+    // Rotation drops the oldest instead.
     apis.each { api ->
         sh """
             apictl import api -f apim/apis/${api} -e ${envName} \
-              --params apim/params/${api}-params.yaml --update -k
+              --params apim/params/${api}-params.yaml --update --rotate-revision -k
         """
     }
 
@@ -317,7 +323,7 @@ def rollback(List steps, List apis) {
         apis.each { api ->
             sh """
                 apictl import api -f apim/apis/${api} -e dev \
-                  --params apim/params/${api}-params.yaml --update -k \
+                  --params apim/params/${api}-params.yaml --update --rotate-revision -k \
                   && echo 'ROLLBACK: restored ${api}' \
                   || echo 'ROLLBACK FAILED for ${api}: this API may be left on the failed version and needs manual attention'
             """
