@@ -1,0 +1,129 @@
+# Pinned so the project name (and therefore volume and network names) does not
+# change when the checkout directory is renamed or cloned under another name.
+name: jamii
+
+services:
+  db:
+    image: mysql:8.4
+    container_name: jamii-db
+    restart: unless-stopped
+    # Pinned timezone so the JDBC URL needs no serverTimezone parameter. That
+    # matters because an "&" in the URL breaks the datasource XML MI renders.
+    command: --default-time-zone=+00:00
+    env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${JAMII_DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${JAMII_DB_NAME}
+      MYSQL_USER: ${JAMII_DB_USER}
+      MYSQL_PASSWORD: ${JAMII_DB_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - jamii-db-data:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      # Uses the container's own MYSQL_ROOT_PASSWORD env var, so the real
+      # secret never needs to be inlined into this file or the compose
+      # project's resolved config.
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - jamii-net
+
+  # Health check confirmed against a real 4.6.0 container on 2026-10-12.
+  # VERIFY still open: the in-container config/lib paths below (deployment.toml,
+  # the JDBC jar, the carbonapps dir) are not proven until phase 1's data
+  # service actually queries MySQL through them.
+  mi:
+    image: wso2/wso2mi:4.6.0
+    container_name: jamii-mi
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      JAMII_DB_URL: ${JAMII_DB_URL}
+      JAMII_DB_USER: ${JAMII_DB_USER}
+      JAMII_DB_PASSWORD: ${JAMII_DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8290:8290" # HTTP: REST APIs, data services
+      - "9201:9201" # management/health
+    volumes:
+      - ./mi/deployment/deployment.toml:/home/wso2carbon/wso2mi-4.6.0/conf/deployment.toml:ro
+      # Stock file with %m switched to %mm on the message-carrying appenders,
+      # which turns on masking using the patterns deployment.toml renders into
+      # conf/wso2-log-masking.properties. Without it those patterns are inert
+      # and MI's own loggers can print raw account numbers on failure paths.
+      # Deliberately not :ro, in case the config mapper rewrites it at boot.
+      - ./mi/deployment/log4j2.properties:/home/wso2carbon/wso2mi-4.6.0/conf/log4j2.properties
+      - ./mi/deployment/libs/mysql-connector-j.jar:/home/wso2carbon/wso2mi-4.6.0/lib/mysql-connector-j.jar:ro
+      # Bind mount, not a named volume: the CAR is built on the host by Maven
+      # and copied in here, which a named volume gives no path for.
+      - ./deploy/carbonapps:/home/wso2carbon/wso2mi-4.6.0/repository/deployment/server/carbonapps
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9201/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - jamii-net
+
+  # Health check confirmed against a real 4.6.0 container on 2026-10-12.
+  apim:
+    image: wso2/wso2am:4.6.0
+    container_name: jamii-apim
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APIM_ADMIN_USER: ${APIM_ADMIN_USER}
+      APIM_ADMIN_PASSWORD: ${APIM_ADMIN_PASSWORD}
+    depends_on:
+      mi:
+        condition: service_healthy
+    ports:
+      - "9443:9443" # management console, publisher, devportal, token endpoint
+      - "8243:8243" # gateway HTTPS
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sfk https://localhost:9443/services/Version || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    networks:
+      - jamii-net
+
+  # Fallback stub for 1b/1c fault and timeout demos (phase 2/3). No mappings
+  # yet in phase 0: an empty WireMock answers every request 404, which is a
+  # valid healthy state until stubs are added.
+  wiremock:
+    image: wiremock/wiremock:3.13.2-2
+    container_name: jamii-wiremock
+    restart: unless-stopped
+    command: ["--port", "8080", "--verbose"]
+    ports:
+      - "8080:8080"
+    volumes:
+      # WireMock loads stubs from <root>/mappings; these drive the 1b timeout
+      # and not-found demos without touching the real backend.
+      - ./tests/wiremock:/home/wiremock
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/__admin/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - jamii-net
+
+volumes:
+  jamii-db-data:
+
+networks:
+  jamii-net:
+    driver: bridge

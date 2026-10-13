@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Internal data service. Called only by AccountsAPI over localhost and
+     never published in APIM; the managed API surface is AccountsAPI.
+     The datasource itself is defined in mi/deployment/deployment.toml and
+     resolves its credentials from environment variables. -->
+<!-- No default xmlns on <data>: with one declared, the data service parser
+     does not recognise the <result> mapping, silently treats the query as an
+     update, and fails with "Can not issue executeUpdate() ... with statements
+     that produce result sets". serviceNamespace only sets the response
+     namespace and is safe. -->
+<data name="AccountsDS" serviceNamespace="http://jamii.co.ke/ds/accounts"
+      transports="http https">
+    <config id="JamiiDB">
+        <property name="carbon_datasource_name">JamiiDS</property>
+    </config>
+    <query id="getAccountByNumber" useConfig="JamiiDB">
+        <!-- Parameterised: the value is bound by the driver, never concatenated
+             into the statement. -->
+        <sql>SELECT account_number, status, balance_amount, currency FROM accounts WHERE account_number = ?</sql>
+        <param name="accountNumber" sqlType="STRING" type="IN" ordinal="1"/>
+        <result element="accounts" rowName="account">
+            <element column="account_number" name="accountNumber" xsdType="string"/>
+            <element column="status" name="status" xsdType="string"/>
+            <element column="balance_amount" name="amount" xsdType="decimal"/>
+            <element column="currency" name="currency" xsdType="string"/>
+        </result>
+    </query>
+    <resource method="GET" path="accounts/{accountNumber}">
+        <call-query href="getAccountByNumber">
+            <with-param name="accountNumber" query-param="accountNumber"/>
+        </call-query>
+    </resource>
+</data>

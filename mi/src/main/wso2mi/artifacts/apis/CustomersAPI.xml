@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<api context="/customers" name="CustomersAPI" xmlns="http://ws.apache.org/ns/synapse">
+    <resource methods="GET" uri-template="/{customerId}">
+        <inSequence>
+            <sequence key="Common_InFlow"/>
+
+            <property name="customerId" expression="$ctx:uri.var.customerId"/>
+            <filter source="$ctx:customerId" regex="^[0-9]{1,6}$">
+                <then>
+                    <property name="validatedCustomerId" expression="$ctx:customerId"/>
+                </then>
+                <else>
+                    <property name="ERR_HTTP" value="400"/>
+                    <property name="ERR_CODE" value="INVALID_REQUEST"/>
+                    <property name="ERR_MSG" value="customerId must be 1 to 6 digits"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </else>
+            </filter>
+
+            <!-- Inbound header hygiene: credentials and internal headers are
+                 never forwarded upstream. The correlation header was already
+                 set by Common_InFlow and is deliberately kept. -->
+            <header name="Authorization" scope="transport" action="remove"/>
+            <header name="X-JWT-Assertion" scope="transport" action="remove"/>
+            <header name="X-Internal-Debug" scope="transport" action="remove"/>
+            <header name="Cookie" scope="transport" action="remove"/>
+
+            <!-- customerId is an opaque internal identifier, not PII, so it is
+                 logged as-is for traceability. The personal fields (name,
+                 email, phone) are never logged. -->
+            <log level="custom" category="INFO">
+                <property name="event" value="BACKEND_CALL"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="backend" value="CustomerBackend"/>
+                <property name="customerId" expression="$ctx:customerId"/>
+            </log>
+
+            <call>
+                <endpoint key="CustomerBackendEP"/>
+            </call>
+
+            <log level="custom" category="INFO">
+                <property name="event" value="BACKEND_RESPONSE"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="backendStatus" expression="$axis2:HTTP_SC"/>
+            </log>
+
+            <!-- source+regex rather than an xpath comparison: the compound
+                 "$axis2:HTTP_SC != '200'" form misfired on successful calls in
+                 phase 1. -->
+            <filter source="$axis2:HTTP_SC" regex="200">
+                <then>
+                    <property name="responseTimestamp"
+                              expression="get-property('SYSTEM_DATE', &quot;yyyy-MM-dd'T'HH:mm:ss.SSSXXX&quot;)"/>
+                    <!-- Projection, not passthrough. The upstream record also
+                         carries password, ssn, bank and crypto fields; none of
+                         them appear here. $1 is unquoted so customerId stays a
+                         JSON number. -->
+                    <payloadFactory media-type="json">
+                        <format>{"customerId":$1,"firstName":"$2","lastName":"$3","email":"$4","phone":"$5","city":"$6","requestId":"$7","timestamp":"$8"}</format>
+                        <args>
+                            <arg evaluator="json" expression="$.id"/>
+                            <arg evaluator="json" expression="$.firstName"/>
+                            <arg evaluator="json" expression="$.lastName"/>
+                            <arg evaluator="json" expression="$.email"/>
+                            <arg evaluator="json" expression="$.phone"/>
+                            <arg evaluator="json" expression="$.address.city"/>
+                            <arg evaluator="xml" expression="$ctx:requestId"/>
+                            <arg evaluator="xml" expression="$ctx:responseTimestamp"/>
+                        </args>
+                    </payloadFactory>
+
+                    <!-- Drops every upstream header (Server, X-Powered-By,
+                         Set-Cookie, CORS, rate-limit), then re-adds only what
+                         a client should see. -->
+                    <property name="TRANSPORT_HEADERS" action="remove" scope="axis2"/>
+                    <header name="X-Correlation-ID" scope="transport" expression="$ctx:requestId"/>
+                    <property name="HTTP_SC" value="200" scope="axis2"/>
+                    <property name="messageType" value="application/json" scope="axis2"/>
+                    <property name="ContentType" value="application/json" scope="axis2"/>
+                    <log level="custom" category="INFO">
+                        <property name="event" value="RESPONSE_OUT"/>
+                        <property name="requestId" expression="$ctx:requestId"/>
+                        <property name="status" value="200"/>
+                        <property name="customerId" expression="$ctx:customerId"/>
+                    </log>
+                    <respond/>
+                </then>
+                <else>
+                    <filter source="$axis2:HTTP_SC" regex="404">
+                        <then>
+                            <property name="ERR_HTTP" value="404"/>
+                            <property name="ERR_CODE" value="CUSTOMER_NOT_FOUND"/>
+                            <property name="ERR_MSG" value="No customer matches the supplied customer id"/>
+                        </then>
+                        <else>
+                            <property name="ERR_HTTP" value="502"/>
+                            <property name="ERR_CODE" value="BACKEND_ERROR"/>
+                            <property name="ERR_MSG" value="The customer service returned an unexpected response"/>
+                        </else>
+                    </filter>
+                    <sequence key="Common_ErrorBuilder"/>
+                </else>
+            </filter>
+        </inSequence>
+        <faultSequence>
+            <sequence key="Common_Fault"/>
+        </faultSequence>
+    </resource>
+</api>

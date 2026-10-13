@@ -1,0 +1,24 @@
+{
+  "priority": 10,
+  "request": {
+    "method": "GET",
+    "urlPattern": "/users/[0-9]+"
+  },
+  "response": {
+    "status": 200,
+    "fixedDelayMilliseconds": 5000,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": 1,
+      "firstName": "Delayed",
+      "lastName": "Stub",
+      "email": "delayed.stub@example.com",
+      "phone": "+254 700-000-0001",
+      "address": {
+        "city": "Nairobi"
+      }
+    }
+  }
+}

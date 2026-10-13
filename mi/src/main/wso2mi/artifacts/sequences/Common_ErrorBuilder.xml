@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sequence name="Common_ErrorBuilder" xmlns="http://ws.apache.org/ns/synapse">
+    <property name="responseTimestamp"
+              expression="get-property('SYSTEM_DATE', &quot;yyyy-MM-dd'T'HH:mm:ss.SSSXXX&quot;)"/>
+    <payloadFactory media-type="json">
+        <format>{"error":{"code":"$1","message":"$2"},"requestId":"$3","timestamp":"$4"}</format>
+        <args>
+            <arg evaluator="xml" expression="$ctx:ERR_CODE"/>
+            <arg evaluator="xml" expression="$ctx:ERR_MSG"/>
+            <arg evaluator="xml" expression="$ctx:requestId"/>
+            <arg evaluator="xml" expression="$ctx:responseTimestamp"/>
+        </args>
+    </payloadFactory>
+    <!-- Drop everything the backend set, then add back only what a client
+         should see. Stops backend/infra headers leaking through errors. -->
+    <property name="TRANSPORT_HEADERS" action="remove" scope="axis2"/>
+    <header name="X-Correlation-ID" scope="transport" expression="$ctx:requestId"/>
+    <property name="HTTP_SC" expression="$ctx:ERR_HTTP" scope="axis2"/>
+    <property name="messageType" value="application/json" scope="axis2"/>
+    <property name="ContentType" value="application/json" scope="axis2"/>
+    <!-- Required when the original request was a GET, which has no body -->
+    <property name="NO_ENTITY_BODY" action="remove" scope="axis2"/>
+    <log level="custom" category="WARN">
+        <property name="event" value="RESPONSE_OUT"/>
+        <property name="requestId" expression="$ctx:requestId"/>
+        <property name="status" expression="$ctx:ERR_HTTP"/>
+        <property name="errorCode" expression="$ctx:ERR_CODE"/>
+    </log>
+    <respond/>
+</sequence>

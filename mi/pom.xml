@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>co.ke.jamii</groupId>
+    <artifactId>jamii-mi</artifactId>
+    <version>1.0.0</version>
+    <!-- Default (jar) packaging on purpose. vscode-car-plugin 5.4.21 does not
+         register a `car` packaging type ("Unknown packaging: car"); the CAR is
+         produced by binding its `car` goal to the package phase instead. The
+         build therefore also emits an unused empty jar, which is the plugin's
+         known behaviour and is ignored by the deploy steps (they glob *.car). -->
+    <name>Jamii Savings Micro Integrator Artifacts</name>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- vscode-car-plugin and synapse-unit-test-maven-plugin are released
+             together on the same version line, so they share this property. -->
+        <wso2.maven.tools.version>5.4.21</wso2.maven.tools.version>
+    </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.wso2.maven</groupId>
+                <artifactId>vscode-car-plugin</artifactId>
+                <version>${wso2.maven.tools.version}</version>
+                <executions>
+                    <execution>
+                        <id>package-car</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>car</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!--
+      Synapse unit tests live behind a profile (`mvn clean install -Pwith-tests`)
+      so the default build does not depend on a plugin that has no test files to
+      run yet. Phase 1 proves CAR packaging first; the tests are added, and this
+      profile exercised, once the build itself is known good.
+      VERIFY: the test server settings below, against a real test run.
+    -->
+    <profiles>
+        <profile>
+            <id>with-tests</id>
+            <properties>
+                <testServerType>remote</testServerType>
+                <testServerHost>localhost</testServerHost>
+                <testServerPort>9008</testServerPort>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.wso2.maven</groupId>
+                        <artifactId>synapse-unit-test-maven-plugin</artifactId>
+                        <version>${wso2.maven.tools.version}</version>
+                        <configuration>
+                            <testServerType>${testServerType}</testServerType>
+                            <testServerHost>${testServerHost}</testServerHost>
+                            <testServerPort>${testServerPort}</testServerPort>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>run-synapse-unit-tests</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>synapse-unit-test</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

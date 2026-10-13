@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synapse calls this sequence when a request matches an API context but no
+     resource within it. Defining it keeps unmatched paths inside the error
+     contract instead of returning Synapse's own default. -->
+<sequence name="_resource_mismatch_handler_" xmlns="http://ws.apache.org/ns/synapse">
+    <sequence key="Common_InFlow"/>
+    <property name="ERR_HTTP" value="404"/>
+    <property name="ERR_CODE" value="RESOURCE_NOT_FOUND"/>
+    <property name="ERR_MSG" value="No resource matches the requested path"/>
+    <sequence key="Common_ErrorBuilder"/>
+</sequence>

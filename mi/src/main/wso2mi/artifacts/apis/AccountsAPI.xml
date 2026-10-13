@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<api context="/accounts" name="AccountsAPI" xmlns="http://ws.apache.org/ns/synapse">
+    <resource methods="GET" uri-template="/{accountNumber}/balance">
+        <inSequence>
+            <sequence key="Common_InFlow"/>
+
+            <property name="accountNumber" expression="$ctx:uri.var.accountNumber"/>
+            <!-- Validate before any backend call, so bad input is 400 and a
+                 value shaped like SQL never reaches the query at all. Both
+                 branches are present because Synapse refuses to deploy a
+                 filter that supplies <else> without <then>; the masked copy
+                 is only meaningful for a valid number anyway. -->
+            <filter source="$ctx:accountNumber" regex="^[0-9]{10}$">
+                <then>
+                    <!-- Masked copy for logs; the full number is never logged. -->
+                    <property name="maskedAccount"
+                              expression="fn:concat('******', fn:substring($ctx:accountNumber, fn:string-length($ctx:accountNumber) - 3))"/>
+                </then>
+                <else>
+                    <property name="ERR_HTTP" value="400"/>
+                    <property name="ERR_CODE" value="INVALID_REQUEST"/>
+                    <property name="ERR_MSG" value="accountNumber must be exactly 10 digits"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </else>
+            </filter>
+
+            <log level="custom" category="INFO">
+                <property name="event" value="BACKEND_CALL"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="backend" value="AccountsDS"/>
+                <property name="account" expression="$ctx:maskedAccount"/>
+            </log>
+
+            <call>
+                <endpoint key="AccountsDSEP"/>
+            </call>
+
+            <log level="custom" category="INFO">
+                <property name="event" value="BACKEND_RESPONSE"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="backendStatus" expression="$axis2:HTTP_SC"/>
+            </log>
+
+            <!-- DB-level failure. Detected by the DataServiceFault element the
+                 data service returns (pool exhausted, database down, bad SQL),
+                 not by $axis2:HTTP_SC: that property does not reliably hold the
+                 backend status here, and testing it made every successful call
+                 fall into this branch. -->
+            <filter xpath="boolean(//*[local-name()='DataServiceFault'])">
+                <then>
+                    <property name="ERR_HTTP" value="503"/>
+                    <property name="ERR_CODE" value="DATA_SOURCE_UNAVAILABLE"/>
+                    <property name="ERR_MSG" value="Account data is temporarily unavailable"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </then>
+            </filter>
+
+            <!-- No row: the data service returns <accounts/> with no child.
+                 Inverted with not(...) so a single <then> carries it. -->
+            <filter xpath="not(boolean(//*[local-name()='account']))">
+                <then>
+                    <property name="ERR_HTTP" value="404"/>
+                    <property name="ERR_CODE" value="ACCOUNT_NOT_FOUND"/>
+                    <property name="ERR_MSG" value="No account matches the supplied account number"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </then>
+            </filter>
+
+            <property name="responseTimestamp"
+                      expression="get-property('SYSTEM_DATE', &quot;yyyy-MM-dd'T'HH:mm:ss.SSSXXX&quot;)"/>
+            <!-- $3 is unquoted so balance.amount stays a JSON number. -->
+            <payloadFactory media-type="json">
+                <format>{"accountNumber":"$1","status":"$2","balance":{"amount":$3,"currency":"$4"},"requestId":"$5","timestamp":"$6"}</format>
+                <args>
+                    <arg evaluator="xml" expression="//*[local-name()='accountNumber']"/>
+                    <arg evaluator="xml" expression="//*[local-name()='status']"/>
+                    <arg evaluator="xml" expression="//*[local-name()='amount']"/>
+                    <arg evaluator="xml" expression="//*[local-name()='currency']"/>
+                    <arg evaluator="xml" expression="$ctx:requestId"/>
+                    <arg evaluator="xml" expression="$ctx:responseTimestamp"/>
+                </args>
+            </payloadFactory>
+
+            <property name="TRANSPORT_HEADERS" action="remove" scope="axis2"/>
+            <header name="X-Correlation-ID" scope="transport" expression="$ctx:requestId"/>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="ContentType" value="application/json" scope="axis2"/>
+            <log level="custom" category="INFO">
+                <property name="event" value="RESPONSE_OUT"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="status" value="200"/>
+                <property name="account" expression="$ctx:maskedAccount"/>
+            </log>
+            <respond/>
+        </inSequence>
+        <faultSequence>
+            <sequence key="Common_Fault"/>
+        </faultSequence>
+    </resource>
+</api>

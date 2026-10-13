@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sequence name="Common_Fault" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- The Synapse error detail is logged here and never returned, so
+         backend hostnames, SQL and stack traces cannot reach a client. -->
+    <log level="custom" category="ERROR">
+        <property name="event" value="FAULT"/>
+        <property name="requestId" expression="$ctx:requestId"/>
+        <property name="synapseErrorCode" expression="$ctx:ERROR_CODE"/>
+        <property name="synapseErrorMessage" expression="$ctx:ERROR_MESSAGE"/>
+    </log>
+    <!-- Classify only when the API has not already set a contract code.
+         Written as not(...) with a single <then>: Synapse refuses to deploy a
+         filter that supplies <else> without <then>. -->
+    <filter xpath="not(boolean($ctx:ERR_CODE))">
+        <then>
+            <switch source="$ctx:ERROR_CODE">
+                <case regex="101504">
+                    <property name="ERR_HTTP" value="504"/>
+                    <property name="ERR_CODE" value="BACKEND_TIMEOUT"/>
+                    <property name="ERR_MSG" value="The upstream service did not respond in time"/>
+                </case>
+                <case regex="101503|101500|101501|101506|101507|101508|303001">
+                    <property name="ERR_HTTP" value="503"/>
+                    <property name="ERR_CODE" value="BACKEND_UNAVAILABLE"/>
+                    <property name="ERR_MSG" value="The upstream service is unavailable"/>
+                </case>
+                <case regex="101505">
+                    <property name="ERR_HTTP" value="502"/>
+                    <property name="ERR_CODE" value="BACKEND_ERROR"/>
+                    <property name="ERR_MSG" value="The upstream service returned an invalid response"/>
+                </case>
+                <default>
+                    <property name="ERR_HTTP" value="500"/>
+                    <property name="ERR_CODE" value="INTERNAL_ERROR"/>
+                    <property name="ERR_MSG" value="An unexpected error occurred"/>
+                </default>
+            </switch>
+            <!-- VERIFY: the ERROR_MESSAGE text for a malformed JSON body on 4.6.0 -->
+            <filter source="$ctx:ERROR_MESSAGE"
+                    regex="(?s).*(building|JsonParse|Unexpected character|Malformed|Invalid JSON).*">
+                <then>
+                    <property name="ERR_HTTP" value="400"/>
+                    <property name="ERR_CODE" value="INVALID_REQUEST"/>
+                    <property name="ERR_MSG" value="The request body is not valid JSON"/>
+                </then>
+            </filter>
+        </then>
+    </filter>
+    <sequence key="Common_ErrorBuilder"/>
+</sequence>

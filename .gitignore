@@ -1,0 +1,24 @@
+# Secrets and local environment
+.env
+
+# Build output
+target/
+build/
+*.car
+deploy/carbonapps/*.car
+
+# Downloaded binaries
+mi/deployment/libs/*.jar
+
+# OS and tooling noise
+.DS_Store
+node_modules/
+*.log
+
+# AI-assisted workflow files: kept locally, not published
+.claude/
+CLAUDE.md
+requirements.md
+plans/
+evidence/
+AI_USAGE.md

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sequence name="Common_InFlow" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- Reuse the caller's correlation ID only when it is well formed.
+         Rejecting malformed IDs keeps attacker-controlled text out of logs. -->
+    <filter source="$trp:X-Correlation-ID" regex="^[A-Za-z0-9-]{8,64}$">
+        <then>
+            <property name="requestId" expression="$trp:X-Correlation-ID"/>
+        </then>
+        <else>
+            <!-- VERIFY: MessageID is "urn:uuid:<uuid>" on MI 4.6.0 -->
+            <property name="requestId"
+                      expression="fn:substring-after(get-property('MessageID'), 'urn:uuid:')"/>
+        </else>
+    </filter>
+    <header name="X-Correlation-ID" scope="transport" expression="$ctx:requestId"/>
+    <!-- The request path is deliberately not logged: it carries the account
+         or customer identifier. Each API logs its own masked copy instead. -->
+    <log level="custom" category="INFO">
+        <property name="event" value="REQUEST_IN"/>
+        <property name="requestId" expression="$ctx:requestId"/>
+        <property name="api" expression="$ctx:SYNAPSE_REST_API"/>
+        <property name="method" expression="$axis2:HTTP_METHOD"/>
+    </log>
+</sequence>
