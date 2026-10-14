@@ -38,7 +38,7 @@ curl -s http://localhost:8290/accounts/1000000001/balance | jq
   "status": "ACTIVE",
   "balance": { "amount": 125430.50, "currency": "KES" },
   "requestId": "9f1c2e4a-55d7-4f0a-9bb1-6a2b7c3d8e11",
-  "timestamp": "2026-10-13T09:41:22.108+00:00"
+  "timestamp": "2026-10-14T05:42:01.885Z"
 }
 ```
 
@@ -63,7 +63,8 @@ so a value shaped like SQL is rejected with 400 before a database call is even
 attempted:
 
 ```bash
-curl -i "http://localhost:8290/accounts/1'%20OR%20'1'='1/balance"   # 400 INVALID_REQUEST
+curl -s "http://localhost:8290/accounts/1%3B%20DROP%20TABLE%20accounts/balance"
+# 400 INVALID_REQUEST — rejected on format, so no statement is ever executed
 ```
 
 ### Three distinct outcomes
@@ -367,7 +368,7 @@ Every error from every API, whatever the backend, has exactly this shape:
 {
   "error": { "code": "ACCOUNT_NOT_FOUND", "message": "No account matches the supplied account number" },
   "requestId": "9f1c2e4a-55d7-4f0a-9bb1-6a2b7c3d8e11",
-  "timestamp": "2026-10-13T09:41:22.108+00:00"
+  "timestamp": "2026-10-14T05:42:01.885Z"
 }
 ```
 
