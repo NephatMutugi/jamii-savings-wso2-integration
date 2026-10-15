@@ -11,6 +11,10 @@ sits behind them.
 | Customer Profile | `GET /jamii/customers/v1/{customerId}` | REST (DummyJSON) | OAuth2 | `Gold` |
 | Loan Eligibility | `POST /jamii/loans/v1/eligibility` | SOAP (dneonline Calculator) | API Key | `SoapBackendGuard` |
 
+Plus one aggregation endpoint, `GET /customers/{id}/dashboard`, which calls the
+database and REST backends in parallel and merges them. It is an MI-only
+integration, not published through the gateway.
+
 Detail lives in [docs/integrations.md](docs/integrations.md) (the three
 integrations, logging, masking, the error contract),
 [docs/apim.md](docs/apim.md) (security, tiers, the custom policy, the API
@@ -41,6 +45,12 @@ discipline — there is exactly one place where an error body is built.
   others stay on `Gold`, because it is the only API fronting a shared
   third-party service Jamii neither controls nor pays for. The limit protects
   the dependency, not Jamii's capacity.
+- **The dashboard degrades rather than fails** — if one of its two parallel
+  sections is unavailable it returns `200` with that section flagged
+  `UNAVAILABLE`; only when both fail does it return `502`. A read-only screen
+  should show what the system has rather than nothing. Cost: a section is
+  identified by absence from the aggregated result rather than by an error
+  code, so a healthy-but-slow backend looks like a dead one.
 - **Rollback is a compensating restore, not a transaction** — MI is atomic
   because all three integrations ship as one CAR, but APIM is imported one API
   at a time with a snapshot restore afterwards, so a consumer could briefly

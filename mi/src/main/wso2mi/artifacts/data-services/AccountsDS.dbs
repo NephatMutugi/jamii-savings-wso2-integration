@@ -30,4 +30,23 @@
             <with-param name="accountNumber" query-param="accountNumber"/>
         </call-query>
     </resource>
+    <!-- Used by the dashboard aggregation only. Returns every account held by
+         one customer, so the dashboard can summarise them in a single call
+         rather than looking up account numbers and then fetching each
+         balance. -->
+    <query id="getAccountsByCustomer" useConfig="JamiiDB">
+        <sql>SELECT account_number, status, balance_amount, currency FROM accounts WHERE customer_id = ?</sql>
+        <param name="customerId" sqlType="INTEGER" type="IN" ordinal="1"/>
+        <result element="accounts" rowName="account">
+            <element column="account_number" name="accountNumber" xsdType="string"/>
+            <element column="status" name="status" xsdType="string"/>
+            <element column="balance_amount" name="amount" xsdType="decimal"/>
+            <element column="currency" name="currency" xsdType="string"/>
+        </result>
+    </query>
+    <resource method="GET" path="accounts/by-customer/{customerId}">
+        <call-query href="getAccountsByCustomer">
+            <with-param name="customerId" query-param="customerId"/>
+        </call-query>
+    </resource>
 </data>

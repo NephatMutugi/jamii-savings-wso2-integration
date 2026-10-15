@@ -401,3 +401,97 @@ LoansAPI     ─┘                        ↑
 `Common_Fault` classifies Synapse-level failures (timeout, connection refused,
 unreadable response) into contract codes, but only when the API has not
 already set one, so an API's own classification always wins.
+
+---
+
+## 4. Dashboard aggregation (bonus)
+
+`GET /customers/{customerId}/dashboard`
+
+Calls the database and REST backends **in parallel** and merges them into one
+body. It lives as a second resource on `CustomersAPI`, because Synapse allows
+one API per context and the path sits under `/customers`.
+
+```bash
+curl -s http://localhost:8290/customers/1/dashboard | jq
+```
+
+```json
+{
+  "customerId": 1,
+  "profile": {
+    "status": "OK",
+    "firstName": "Emily", "lastName": "Johnson",
+    "email": "emily.johnson@x.dummyjson.com", "city": "Phoenix"
+  },
+  "accounts": {
+    "status": "OK",
+    "count": 2,
+    "totalBalance": { "amount": 213080.5, "currency": "KES" }
+  },
+  "requestId": "…",
+  "timestamp": "…"
+}
+```
+
+`213080.5` is the sum of customer 1's two seeded accounts. The accounts
+section is a genuine aggregation — count and combined balance — not a
+pass-through of rows.
+
+### How the fan-out works
+
+```
+inSequence   clone id="dashboard" ─┬─→ send → DashboardProfileEP  → /customers/{id}
+                                   └─→ send → DashboardAccountsEP → AccountsDS
+outSequence  aggregate id="dashboard" (min 2, max 2, timeout 4s) → merged body
+```
+
+`<send>` rather than `<call>`, and the aggregate in the `outSequence` rather
+than inline: with `<call>` the response stays inside the cloned branch's
+message context, `<respond/>` has no transport back to the caller, and the
+request hangs with no reply at all.
+
+The `<clone>` must carry an `id` matching the `<aggregate>` id — that is how
+the mediator correlates the branch responses.
+
+Parallelism is observable in the logs; the two `BACKEND_CALL` events are
+microseconds apart and total latency tracks the slower branch, not the sum:
+
+```
+07:09:26.851412  BACKEND_CALL  backend = CustomerBackend  section = profile
+07:09:26.851544  BACKEND_CALL  backend = AccountsDS       section = accounts
+```
+
+### Partial failure
+
+With the database stopped:
+
+```json
+{"customerId":1,
+ "profile":{"status":"OK","firstName":"Emily",…},
+ "accounts":{"status":"UNAVAILABLE"},
+ "requestId":"…","timestamp":"…"}
+```
+
+Still `200`. A `502 BACKEND_ERROR`, in the shared error envelope, is returned
+only when **no** section can be populated.
+
+| Failure mode | Cost | Why |
+|---|---|---|
+| Backend answers with an error | immediate | A stopped database makes the data service return a `DataServiceFault` body, which still counts as a collected message, so aggregation completes at once — the body just has no `account` element |
+| Backend never answers at all | the 4 s timeout | Nothing arrives, so only the completion timeout resolves it |
+
+**Limitation:** a section is identified by what the aggregated body does *not*
+contain rather than by an error code, so a healthy-but-slow backend is
+indistinguishable from a dead one. Acceptable for a read-only dashboard;
+not for anything transactional.
+
+### Why clone and aggregate rather than scatter-gather
+
+MI 4.6.0 ships a purpose-built `<scatter-gather>` mediator which would be
+fewer moving parts. Its exact attribute vocabulary could not be pinned down:
+the WSO2 documentation renders its XML client-side, and the shipped class files
+expose constant names (`ATT_ROOT_ELEMENT`, `RESULT_TYPE_Q`) without their
+literal values. Clone and aggregate are classic, well documented, and
+consistent with the rest of these artifacts. A deliberate choice, not an
+oversight.

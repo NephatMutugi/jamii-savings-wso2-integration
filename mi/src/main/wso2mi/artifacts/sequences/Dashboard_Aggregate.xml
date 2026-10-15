@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sequence name="Dashboard_Aggregate" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- Runs in the dashboard resource's outSequence. Each cloned branch's
+         response arrives here separately; the aggregate mediator correlates
+         them on the id the clone tagged them with.
+
+         min="2" is deliberate, and was a bug when it was 1: the aggregate
+         completes as soon as min messages have been collected, so min="1"
+         completed on whichever backend answered first and silently discarded
+         the other section entirely.
+
+         Partial data arises two different ways, with very different latency:
+
+         - A backend that answers with an error (a stopped database makes the
+           data service return a DataServiceFault body) still counts as a
+           collected message, so max="2" is reached and the response is
+           immediate. This is the common case and costs nothing.
+         - A backend that never answers at all is only resolved by the
+           timeout, and that response costs the full 4 s.
+
+         Either way the section is identified by what the aggregated body does
+         *not* contain, rather than by an error code, so a healthy-but-slow
+         backend is indistinguishable from a dead one. For a read-only
+         dashboard that is an acceptable trade, and it is stated in the
+         README. -->
+    <aggregate id="dashboard">
+        <completeCondition timeout="4">
+            <messageCount min="2" max="2"/>
+        </completeCondition>
+        <onComplete expression="$body/*">
+
+            <!-- Everything is extracted before any payloadFactory runs, since
+                 building a payload replaces the aggregated body these XPaths
+                 read from.
+
+                 The profile response is JSON and the accounts response is XML
+                 from the data service, so both are probed with local-name()
+                 rather than a fixed namespace. -->
+            <property name="hasProfile" expression="boolean(//*[local-name()='firstName'])"/>
+            <property name="hasAccounts" expression="boolean(//*[local-name()='account'])"/>
+
+            <property name="pFirstName" expression="(//*[local-name()='firstName'])[1]"/>
+            <property name="pLastName" expression="(//*[local-name()='lastName'])[1]"/>
+            <property name="pEmail" expression="(//*[local-name()='email'])[1]"/>
+            <property name="pCity" expression="(//*[local-name()='city'])[1]"/>
+
+            <!-- The accounts section is a real aggregation rather than a
+                 pass-through: a customer can hold several accounts, so the
+                 dashboard reports how many and their combined balance.
+
+                 count() yields a double that renders as "2.0", which is wrong
+                 for a JSON count, so the decimal part is trimmed with the same
+                 core XPath 1.0 idiom used in LoansAPI.
+
+                 The parentheses in (//*[...])[1] matter: without them the
+                 predicate applies per parent element and selects the first
+                 currency of *every* account, serialising both nodes into the
+                 value. -->
+            <property name="aCount"
+                      expression="substring-before(concat(count(//*[local-name()='account']), '.'), '.')"/>
+            <property name="aTotal" expression="sum(//*[local-name()='amount'])"/>
+            <property name="aCurrency" expression="(//*[local-name()='currency'])[1]"/>
+
+            <property name="responseTimestamp"
+                      expression="get-property('SYSTEM_DATE', &quot;yyyy-MM-dd'T'HH:mm:ss.SSSXXX&quot;)"/>
+
+            <!-- Nothing came back at all. A 200 carrying two UNAVAILABLE
+                 sections would claim success while telling the caller
+                 nothing, so this is the one case that fails outright.
+                 Common_ErrorBuilder responds, so nothing below it runs. -->
+            <filter xpath="$ctx:hasProfile = 'false' and $ctx:hasAccounts = 'false'">
+                <then>
+                    <property name="ERR_HTTP" value="502"/>
+                    <property name="ERR_CODE" value="BACKEND_ERROR"/>
+                    <property name="ERR_MSG" value="No dashboard data is currently available"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </then>
+            </filter>
+
+            <!-- Three mutually exclusive shapes, rather than one template with
+                 JSON strings spliced in. payloadFactory escapes a substituted
+                 value's quotes, so assembling each section as a JSON string
+                 and injecting it produced \"status\":\"OK\" in the body.
+                 Writing the shapes out is longer but yields valid JSON
+                 without fighting the escaping. -->
+            <filter xpath="$ctx:hasProfile = 'true' and $ctx:hasAccounts = 'true'">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"customerId":$1,"profile":{"status":"OK","firstName":"$2","lastName":"$3","email":"$4","city":"$5"},"accounts":{"status":"OK","count":$6,"totalBalance":{"amount":$7,"currency":"$8"}},"requestId":"$9","timestamp":"$10"}</format>
+                        <args>
+                            <arg evaluator="xml" expression="$ctx:dashCustomerId"/>
+                            <arg evaluator="xml" expression="$ctx:pFirstName"/>
+                            <arg evaluator="xml" expression="$ctx:pLastName"/>
+                            <arg evaluator="xml" expression="$ctx:pEmail"/>
+                            <arg evaluator="xml" expression="$ctx:pCity"/>
+                            <arg evaluator="xml" expression="$ctx:aCount"/>
+                            <arg evaluator="xml" expression="$ctx:aTotal"/>
+                            <arg evaluator="xml" expression="$ctx:aCurrency"/>
+                            <arg evaluator="xml" expression="$ctx:requestId"/>
+                            <arg evaluator="xml" expression="$ctx:responseTimestamp"/>
+                        </args>
+                    </payloadFactory>
+                </then>
+            </filter>
+
+            <filter xpath="$ctx:hasProfile = 'true' and $ctx:hasAccounts = 'false'">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"customerId":$1,"profile":{"status":"OK","firstName":"$2","lastName":"$3","email":"$4","city":"$5"},"accounts":{"status":"UNAVAILABLE"},"requestId":"$6","timestamp":"$7"}</format>
+                        <args>
+                            <arg evaluator="xml" expression="$ctx:dashCustomerId"/>
+                            <arg evaluator="xml" expression="$ctx:pFirstName"/>
+                            <arg evaluator="xml" expression="$ctx:pLastName"/>
+                            <arg evaluator="xml" expression="$ctx:pEmail"/>
+                            <arg evaluator="xml" expression="$ctx:pCity"/>
+                            <arg evaluator="xml" expression="$ctx:requestId"/>
+                            <arg evaluator="xml" expression="$ctx:responseTimestamp"/>
+                        </args>
+                    </payloadFactory>
+                </then>
+            </filter>
+
+            <filter xpath="$ctx:hasProfile = 'false' and $ctx:hasAccounts = 'true'">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"customerId":$1,"profile":{"status":"UNAVAILABLE"},"accounts":{"status":"OK","count":$2,"totalBalance":{"amount":$3,"currency":"$4"}},"requestId":"$5","timestamp":"$6"}</format>
+                        <args>
+                            <arg evaluator="xml" expression="$ctx:dashCustomerId"/>
+                            <arg evaluator="xml" expression="$ctx:aCount"/>
+                            <arg evaluator="xml" expression="$ctx:aTotal"/>
+                            <arg evaluator="xml" expression="$ctx:aCurrency"/>
+                            <arg evaluator="xml" expression="$ctx:requestId"/>
+                            <arg evaluator="xml" expression="$ctx:responseTimestamp"/>
+                        </args>
+                    </payloadFactory>
+                </then>
+            </filter>
+
+            <property name="TRANSPORT_HEADERS" action="remove" scope="axis2"/>
+            <header name="X-Correlation-ID" scope="transport" expression="$ctx:requestId"/>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="ContentType" value="application/json" scope="axis2"/>
+            <log level="custom" category="INFO">
+                <property name="event" value="RESPONSE_OUT"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="status" value="200"/>
+                <property name="customerId" expression="$ctx:dashCustomerId"/>
+                <!-- Only whether each section resolved, never its contents:
+                     the profile carries the customer's name and email. -->
+                <property name="profileResolved" expression="$ctx:hasProfile"/>
+                <property name="accountsResolved" expression="$ctx:hasAccounts"/>
+            </log>
+            <respond/>
+        </onComplete>
+    </aggregate>
+</sequence>

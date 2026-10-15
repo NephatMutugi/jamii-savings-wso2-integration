@@ -107,4 +107,73 @@
             <sequence key="Common_Fault"/>
         </faultSequence>
     </resource>
+
+    <!-- Dashboard aggregation. It lives on this API because Synapse allows one
+         API per context, and the brief's path is /customers/{id}/dashboard.
+         The more specific template wins over /{customerId}. -->
+    <resource methods="GET" uri-template="/{customerId}/dashboard">
+        <inSequence>
+            <sequence key="Common_InFlow"/>
+
+            <property name="dashCustomerId" expression="$ctx:uri.var.customerId"/>
+            <filter source="$ctx:dashCustomerId" regex="^[0-9]{1,6}$">
+                <then>
+                    <property name="dashValid" value="true"/>
+                </then>
+                <else>
+                    <property name="ERR_HTTP" value="400"/>
+                    <property name="ERR_CODE" value="INVALID_REQUEST"/>
+                    <property name="ERR_MSG" value="customerId must be 1 to 6 digits"/>
+                    <sequence key="Common_ErrorBuilder"/>
+                </else>
+            </filter>
+
+            <!-- Both branches are fanned out before either response is read,
+                 so the two backend calls overlap rather than queueing.
+                 sequential="false" is the default and is stated explicitly
+                 because it is the whole point of this resource.
+
+                 <send>, not <call>: the responses have to arrive in the
+                 outSequence for the aggregate mediator to collect them and
+                 for <respond/> to still hold the original caller's transport.
+                 With <call> the response stays inside the cloned branch and
+                 the request hangs with no reply. -->
+            <clone id="dashboard" continueParent="false" sequential="false">
+                <target>
+                    <sequence>
+                        <log level="custom" category="INFO">
+                            <property name="event" value="BACKEND_CALL"/>
+                            <property name="requestId" expression="$ctx:requestId"/>
+                            <property name="backend" value="CustomerBackend"/>
+                            <property name="section" value="profile"/>
+                            <property name="customerId" expression="$ctx:dashCustomerId"/>
+                        </log>
+                        <send>
+                            <endpoint key="DashboardProfileEP"/>
+                        </send>
+                    </sequence>
+                </target>
+                <target>
+                    <sequence>
+                        <log level="custom" category="INFO">
+                            <property name="event" value="BACKEND_CALL"/>
+                            <property name="requestId" expression="$ctx:requestId"/>
+                            <property name="backend" value="AccountsDS"/>
+                            <property name="section" value="accounts"/>
+                            <property name="customerId" expression="$ctx:dashCustomerId"/>
+                        </log>
+                        <send>
+                            <endpoint key="DashboardAccountsEP"/>
+                        </send>
+                    </sequence>
+                </target>
+            </clone>
+        </inSequence>
+        <outSequence>
+            <sequence key="Dashboard_Aggregate"/>
+        </outSequence>
+        <faultSequence>
+            <sequence key="Common_Fault"/>
+        </faultSequence>
+    </resource>
 </api>
