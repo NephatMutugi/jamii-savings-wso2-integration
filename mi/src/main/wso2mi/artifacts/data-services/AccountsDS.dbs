@@ -23,7 +23,7 @@
             <element column="status" name="status" xsdType="string"/>
             <element column="balance_amount" name="amount" xsdType="decimal"/>
             <element column="currency" name="currency" xsdType="string"/>
-            <element column="last_transaction_date" name="last_transaction_date" xsdType="string"/>
+            <element column="last_transaction_date" name="lastTransactionDate" xsdType="string"/>
         </result>
     </query>
     <resource method="GET" path="accounts/{accountNumber}">
@@ -43,7 +43,7 @@
             <element column="status" name="status" xsdType="string"/>
             <element column="balance_amount" name="amount" xsdType="decimal"/>
             <element column="currency" name="currency" xsdType="string"/>
-            <element column="last_transaction_date" name="last_transaction_date" xsdType="string"/>
+            <element column="last_transaction_date" name="lastTransactionDate" xsdType="dateTime"/>
         </result>
     </query>
     <resource method="GET" path="accounts/by-customer/{customerId}">
