@@ -70,7 +70,7 @@
                       expression="get-property('SYSTEM_DATE', &quot;yyyy-MM-dd'T'HH:mm:ss.SSSXXX&quot;)"/>
             <!-- $3 is unquoted so balance.amount stays a JSON number. -->
             <payloadFactory media-type="json">
-                <format>{"accountNumber":"$1","status":"$2","balance":{"amount":$3,"currency":"$4"},"requestId":"$5","timestamp":"$6"}</format>
+                <format>{"accountNumber":"$1","status":"$2","balance":{"amount":$3,"currency":"$4"},"requestId":"$5","timestamp":"$6","lastTransactionDate":"$7"}</format>
                 <args>
                     <arg evaluator="xml" expression="//*[local-name()='accountNumber']"/>
                     <arg evaluator="xml" expression="//*[local-name()='status']"/>
@@ -78,6 +78,7 @@
                     <arg evaluator="xml" expression="//*[local-name()='currency']"/>
                     <arg evaluator="xml" expression="$ctx:requestId"/>
                     <arg evaluator="xml" expression="$ctx:responseTimestamp"/>
+                    <arg evaluator="xml" expression="//*[local-name()='lastTransactionDate']"/>
                 </args>
             </payloadFactory>
 
