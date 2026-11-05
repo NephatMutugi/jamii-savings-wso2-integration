@@ -1,0 +1,15 @@
+type: operation_policy_specification
+version: v4.6.0
+data:
+  category: Mediation
+  name: correlationIdInjector
+  version: v1
+  displayName: Correlation ID Injector
+  description: Sets X-Correlation-ID at the gateway when the caller did not send a well formed one, so the gateway, the integration and the backend all share one trace identifier
+  applicableFlows:
+   - request
+  supportedGateways:
+   - Synapse
+  supportedApiTypes:
+   - HTTP
+  policyAttributes: []
