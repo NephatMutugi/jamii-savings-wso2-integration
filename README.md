@@ -11,9 +11,11 @@ sits behind them.
 | Customer Profile | `GET /jamii/customers/v1/{customerId}` | REST (DummyJSON) | OAuth2 | `Gold` |
 | Loan Eligibility | `POST /jamii/loans/v1/eligibility` | SOAP (dneonline Calculator) | API Key | `SoapBackendGuard` |
 
-Plus one aggregation endpoint, `GET /customers/{id}/dashboard`, which calls the
-database and REST backends in parallel and merges them. It is an MI-only
-integration, not published through the gateway.
+Two further MI-only integrations, not published through the gateway:
+`GET /customers/{id}/dashboard` calls the database and REST backends in
+parallel and merges them, and a RabbitMQ consumer takes loan-application
+events off a queue, maps them onto the eligibility API and dead-letters
+anything it cannot process.
 
 Detail lives in [docs/integrations.md](docs/integrations.md) (the three
 integrations, logging, masking, the error contract),
@@ -51,6 +53,14 @@ discipline — there is exactly one place where an error body is built.
   should show what the system has rather than nothing. Cost: a section is
   identified by absence from the aggregated result rather than by an error
   code, so a healthy-but-slow backend looks like a dead one.
+- **The queue consumer dead-letters instead of retrying** — every failure
+  ends with the message on the DLQ and the consumer still running, but there
+  is no automatic retry: MI 4.6.0 gave one delivery attempt whether driven by
+  the inbound endpoint's dead-letter parameters or by
+  `SET_ROLLBACK_ONLY`/`SET_REQUEUE_ON_ROLLBACK`. A transient dependency
+  outage therefore parks the event rather than retrying it, and recovery
+  means redriving the DLQ. The configuration says so rather than implying
+  retries happen.
 - **Rollback is a compensating restore, not a transaction** — MI is atomic
   because all three integrations ship as one CAR, but APIM is imported one API
   at a time with a snapshot restore afterwards, so a consumer could briefly
@@ -83,9 +93,21 @@ target is missing. Add Synapse unit tests for mediation logic, so a
 transformation regression is caught without a running stack. Add metrics and
 correlation-ID-keyed tracing across gateway → MI → backend. Re-enable
 suspension with circuit breaking, plus a short-TTL cache on the customer
-proxy. Read the datasource password from a vault rather than the environment.
-Then the two bonus items: an aggregation endpoint over all three, and
-eligibility events published to a broker with a dead-letter queue.
+proxy. Read the datasource password from a vault rather than the environment, and
+the broker password too, which is the only credential currently inline. Give
+the queue consumer real bounded retry, and with it the idempotency a redriven
+DLQ needs.
+
+## Asynchronous vs request/response
+
+The queue consumer differs from the three APIs in one way that matters: no
+caller is waiting. An HTTP request that fails gets a status code in a shared
+error envelope and the caller decides whether to retry. A message that fails
+has nobody to tell, so MI has to decide its fate — acknowledge, dead-letter,
+or redeliver — and a bad message is parked for a human instead of being
+rejected back to its sender. Success is an acknowledgement rather than a
+response, and a declined application is a success in both worlds: a `200` on
+the API, an ack on the queue.
 
 ## How to run it locally
 
@@ -121,6 +143,9 @@ curl -s -X POST http://localhost:8290/loans/eligibility \
 # 6. Or run the contract suite (9 requests, 33 assertions)
 newman run tests/postman/jamii-mi.postman_collection.json \
   -e tests/postman/dev.postman_environment.json
+
+# 7. Optional: the message broker for the queue consumer
+docker compose --profile mq up -d rabbitmq && ./mq/create-user.sh
 ```
 
 Publishing to APIM is in [docs/apim.md](docs/apim.md); the pipeline

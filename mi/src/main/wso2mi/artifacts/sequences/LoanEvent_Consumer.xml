@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sequence name="LoanEvent_Consumer" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- Consumes a loan-application event, maps the bank's event shape onto
+         the eligibility API's request shape, and calls that API.
+
+         There is no caller waiting for a reply here, which is the fundamental
+         difference from the three HTTP APIs: a failure cannot be reported as
+         a status code, so it has to be either retried or dead-lettered. -->
+
+    <!-- The event's own id is the correlation id where one is supplied, so a
+         message can be traced from the broker through to the decision. -->
+    <property name="eventId" expression="json-eval($.eventId)"/>
+    <filter source="$ctx:eventId" regex="^[A-Za-z0-9-]{4,64}$">
+        <then>
+            <property name="requestId" expression="$ctx:eventId"/>
+        </then>
+        <else>
+            <property name="requestId"
+                      expression="fn:substring-after(get-property('MessageID'), 'urn:uuid:')"/>
+        </else>
+    </filter>
+    <header name="X-Correlation-ID" scope="transport" expression="$ctx:requestId"/>
+
+    <log level="custom" category="INFO">
+        <property name="event" value="EVENT_IN"/>
+        <property name="requestId" expression="$ctx:requestId"/>
+        <property name="queue" value="jamii.loan.applications"/>
+        <property name="eventType" expression="json-eval($.eventType)"/>
+    </log>
+
+    <!-- The bank's event nests the fields and names them differently from the
+         API. This is the mapping, extracted before anything is rebuilt. -->
+    <property name="evCustomerId" expression="json-eval($.applicant.customerId)"/>
+    <property name="evIncome" expression="json-eval($.applicant.incomeMonthly)"/>
+    <property name="evDebt" expression="json-eval($.applicant.debtMonthly)"/>
+    <property name="evPrincipal" expression="json-eval($.loan.principal)"/>
+    <property name="evTenor" expression="json-eval($.loan.tenorMonths)"/>
+
+    <!-- The valid path is the <then> branch and dead-lettering the <else>,
+         rather than a guard filter followed by <drop/>. <drop/> ends
+         mediation with a false return, which the inbound endpoint reads as a
+         failed consume: the message was never acknowledged and sat unacked on
+         the queue even though it had already been dead-lettered. Letting the
+         sequence run to its natural end is what produces the ack. -->
+    <filter xpath="boolean($ctx:evCustomerId) and number($ctx:evIncome) &gt; 0 and number($ctx:evPrincipal) &gt; 0 and number($ctx:evTenor) &gt;= 1 and number($ctx:evDebt) &gt;= 0">
+        <then>
+            <log level="custom" category="INFO">
+                <property name="event" value="BACKEND_CALL"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="backend" value="LoansAPI"/>
+                <property name="customerId" expression="$ctx:evCustomerId"/>
+            </log>
+
+            <!-- Transformed, not forwarded: field names and nesting both
+                 change. -->
+            <payloadFactory media-type="json">
+                <format>{"customerId":$1,"monthlyIncome":$2,"monthlyDebt":$3,"requestedAmount":$4,"termMonths":$5}</format>
+                <args>
+                    <arg evaluator="xml" expression="$ctx:evCustomerId"/>
+                    <arg evaluator="xml" expression="$ctx:evIncome"/>
+                    <arg evaluator="xml" expression="$ctx:evDebt"/>
+                    <arg evaluator="xml" expression="$ctx:evPrincipal"/>
+                    <arg evaluator="xml" expression="$ctx:evTenor"/>
+                </args>
+            </payloadFactory>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="ContentType" value="application/json" scope="axis2"/>
+
+            <!-- A failure here is transient by assumption: the event is well
+                 formed, the dependency is not answering. It is allowed to
+                 fault, which hands the message to the inbound endpoint's
+                 bounded redelivery and then the dead-letter exchange. -->
+            <call>
+                <endpoint key="LoanEligibilityEP"/>
+            </call>
+
+            <!-- A decline is a successful consume. The business answer is
+                 "no", which is not an error - exactly as on the HTTP API,
+                 where a decline is a 200. -->
+            <log level="custom" category="INFO">
+                <property name="event" value="DECISION"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="customerId" expression="$ctx:evCustomerId"/>
+                <property name="eligible" expression="json-eval($.eligible)"/>
+                <property name="reason" expression="json-eval($.reason)"/>
+                <property name="monthlyInstalment" expression="json-eval($.monthlyInstalment)"/>
+            </log>
+        </then>
+        <else>
+            <!-- Unprocessable by inspection: a required field is absent or
+                 not a usable number. This message will be exactly as wrong on
+                 every redelivery, so it goes to the dead-letter exchange now
+                 and is acknowledged. -->
+            <log level="custom" category="WARN">
+                <property name="event" value="DEAD_LETTER"/>
+                <property name="requestId" expression="$ctx:requestId"/>
+                <property name="reason" value="UNPROCESSABLE_EVENT"/>
+                <property name="detail" value="a required applicant or loan field is missing or not a positive number"/>
+            </log>
+            <!-- The original body is forwarded unchanged, so whoever drains
+                 the DLQ sees exactly what was published.
+
+                 OUT_ONLY + <call>, not <send>. <send> terminates mediation
+                 with a false return, which the inbound endpoint reads as a
+                 failed consume: the message was dead-lettered AND left
+                 unacknowledged, and the unacked delivery then blocked the
+                 consumer so later messages were never picked up. OUT_ONLY
+                 tells Synapse not to expect a reply, and <call> returns
+                 control so the sequence finishes and the message is acked. -->
+            <property name="OUT_ONLY" value="true" scope="default" type="STRING"/>
+            <call>
+                <endpoint key="LoanEventDlqEP"/>
+            </call>
+        </else>
+    </filter>
+</sequence>

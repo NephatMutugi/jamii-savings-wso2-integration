@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sequence name="LoanEvent_Error" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- The inbound endpoint's onError sequence. Reached when the consumer
+         faults rather than completing: a body that could not be parsed at all,
+         or the eligibility API not answering.
+
+         The job here is to guarantee the message is not lost, and to do it
+         without taking the consumer down with it.
+
+         Three things were learned the hard way, each by checking queue depths
+         and consumer counts rather than trusting the happy path:
+
+         1. Logging alone silently drops the message. MI treats a completed
+            error sequence as "handled" and acknowledges the delivery, so a
+            valid event whose dependency was unreachable vanished entirely -
+            nothing on either queue.
+         2. Automatic bounded redelivery could not be made to work on
+            MI 4.6.0. The inbound endpoint's own dead-lettering parameters,
+            and SET_ROLLBACK_ONLY / SET_REQUEUE_ON_ROLLBACK in both default
+            and axis2 scope, all produced exactly one delivery attempt. There
+            is therefore no automatic retry, and the README says so rather
+            than the configuration implying otherwise.
+         3. Forwarding the original body does not work here. When the failure
+            was a body that could not be built as JSON, the RabbitMQ sender
+            threw "Unable to get the message formatter to use", that exception
+            propagated out of handleDelivery, and the consumer died - leaving
+            the queue with no consumer and every later message stuck behind
+            the poison one. Worse than dropping.
+
+         So this sequence builds its own small, always-valid JSON record and
+         publishes that. The DLQ entry for an unparseable message describes
+         the failure instead of reproducing the bytes; the consumer's own
+         unprocessable path still forwards the original body verbatim, since
+         there the body parsed fine. -->
+    <log level="custom" category="ERROR">
+        <property name="event" value="EVENT_FAILED"/>
+        <property name="requestId" expression="$ctx:requestId"/>
+        <property name="synapseErrorCode" expression="$ctx:ERROR_CODE"/>
+        <property name="synapseErrorMessage" expression="$ctx:ERROR_MESSAGE"/>
+        <property name="disposition" value="dead-lettered, no automatic retry"/>
+    </log>
+
+    <!-- Only the error code is interpolated, never ERROR_MESSAGE: Synapse
+         error text contains quotes and newlines, which would produce an
+         invalid JSON body and fail the publish for a second reason. The full
+         message is in the log line above. -->
+    <payloadFactory media-type="json">
+        <format>{"error":"EVENT_FAILED","reason":"CONSUMER_FAILED","synapseErrorCode":"$1","requestId":"$2","timestamp":"$3","note":"original message body is not reproduced here; see the MI log for this requestId"}</format>
+        <args>
+            <arg evaluator="xml" expression="$ctx:ERROR_CODE"/>
+            <arg evaluator="xml" expression="$ctx:requestId"/>
+            <arg evaluator="xml" expression="get-property('SYSTEM_DATE', &quot;yyyy-MM-dd'T'HH:mm:ss.SSSXXX&quot;)"/>
+        </args>
+    </payloadFactory>
+    <property name="messageType" value="application/json" scope="axis2"/>
+    <property name="ContentType" value="application/json" scope="axis2"/>
+
+    <!-- OUT_ONLY + <call>, for the same reason as in the consumer: <send>
+         ends mediation with a false return and leaves the delivery unacked,
+         which blocks the consumer for every message behind it. -->
+    <property name="OUT_ONLY" value="true" scope="default" type="STRING"/>
+    <call>
+        <endpoint key="LoanEventDlqEP"/>
+    </call>
+</sequence>

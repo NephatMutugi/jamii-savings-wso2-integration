@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inboundEndpoint xmlns="http://ws.apache.org/ns/synapse"
+                 name="LoanEventListener"
+                 sequence="LoanEvent_Consumer"
+                 onError="LoanEvent_Error"
+                 protocol="rabbitmq"
+                 suspend="false">
+    <parameters>
+        <!-- Connection details are literal because MI resolves inbound
+             endpoint parameters as static strings: neither $env{} nor
+             ${configs.x} is expanded here. Both were tried - the broker log
+             showed a login attempt for the user "$env{JAMII_MQ_USER}", the
+             placeholder itself.
+
+             These are therefore local-development-only credentials for the
+             Compose broker, matching .env.example, and are deliberately not a
+             secret. A real deployment would resolve the password through MI's
+             Secure Vault instead; that trade is recorded in the README.
+
+             The datasource keeps using $env{} because deployment.toml IS
+             processed by the config mapper. Synapse artifacts are not. -->
+        <parameter name="rabbitmq.connection.factory">AMQPConnectionFactory</parameter>
+        <parameter name="rabbitmq.server.host.name">rabbitmq</parameter>
+        <parameter name="rabbitmq.server.port">5672</parameter>
+        <parameter name="rabbitmq.server.user.name">jamii_mq</parameter>
+        <parameter name="rabbitmq.server.password">jamii_mq_local_dev</parameter>
+        <parameter name="rabbitmq.queue.name">jamii.loan.applications</parameter>
+
+        <!-- Manual acknowledgement. With auto-ack the broker considers a
+             message delivered the moment it is handed over, so a consumer
+             failure would lose it silently - which is exactly what this
+             requirement forbids. -->
+        <parameter name="rabbitmq.queue.auto.ack">false</parameter>
+
+        <!-- Without this the body is treated as plain text and json-eval
+             returns nothing, so every event would look like it was missing
+             all of its fields. -->
+        <parameter name="rabbitmq.message.content.type">application/json</parameter>
+
+        <!-- These are the documented dead-lettering parameters, kept because
+             they declare the intended policy, but they did NOT produce a
+             second delivery attempt in testing on MI 4.6.0: a failed consume
+             was acknowledged and dropped. The guarantee that nothing is lost
+             therefore comes from LoanEvent_Error publishing to the
+             dead-letter exchange itself, not from these settings. The README
+             records this rather than implying retries happen. -->
+        <parameter name="rabbitmq.message.max.dead.lettered.count">3</parameter>
+        <parameter name="rabbitmq.message.requeue.delay">2000</parameter>
+        <parameter name="rabbitmq.message.error.exchange.name">jamii.loans.dlx</parameter>
+        <parameter name="rabbitmq.message.error.queue.routing.key">dlq</parameter>
+
+        <!-- The broker runs behind a compose profile and may start after MI,
+             so the listener retries the connection instead of giving up. -->
+        <parameter name="rabbitmq.connection.retry.count">5</parameter>
+        <parameter name="rabbitmq.connection.retry.interval">10000</parameter>
+    </parameters>
+</inboundEndpoint>

@@ -47,6 +47,8 @@ services:
       JAMII_DB_URL: ${JAMII_DB_URL}
       JAMII_DB_USER: ${JAMII_DB_USER}
       JAMII_DB_PASSWORD: ${JAMII_DB_PASSWORD}
+      JAMII_MQ_USER: ${JAMII_MQ_USER}
+      JAMII_MQ_PASSWORD: ${JAMII_MQ_PASSWORD}
     depends_on:
       db:
         condition: service_healthy
@@ -118,6 +120,35 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    networks:
+      - jamii-net
+
+  # Bonus B. Behind a profile so the day-to-day stack stays light and the
+  # bonus cannot break the core demo:
+  #   docker compose --profile mq up -d rabbitmq
+  rabbitmq:
+    profiles: ["mq"]
+    image: rabbitmq:3.13-management
+    container_name: jamii-rabbitmq
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RABBITMQ_DEFAULT_USER: ${JAMII_MQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${JAMII_MQ_PASSWORD}
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # management UI
+    volumes:
+      # Exchanges, queues and the dead-letter binding come from a committed
+      # file, so the topology the consumer depends on is version controlled.
+      - ./mq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./mq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
     networks:
       - jamii-net
 

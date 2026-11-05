@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<endpoint name="LoanEventDlqEP" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- Publishes a message the consumer has judged permanently unprocessable
+         straight to the dead-letter exchange, rather than letting it fail. A
+         structurally invalid event will be just as invalid on every
+         redelivery, so retrying it only burns the redelivery budget to reach
+         the same conclusion.
+
+         The connection parameters are spelled out in the URI. Naming the
+         deployment.toml factory alone ("rabbitmq:/AMQPConnectionFactory?...")
+         does not work: the sender logged
+         "[null_null_null_null_...] Attempting to create connection" and the
+         publish failed, because it resolved none of the connection settings
+         from that name.
+
+         As with the inbound endpoint, these are local-development-only
+         credentials for the Compose broker, matching .env.example. MI does
+         not expand $env{} or ${configs.x} in Synapse artifacts, so a real
+         deployment would resolve the password through Secure Vault. Recorded
+         in the README. -->
+    <address uri="rabbitmq:/?rabbitmq.server.host.name=rabbitmq&amp;rabbitmq.server.port=5672&amp;rabbitmq.server.user.name=jamii_mq&amp;rabbitmq.server.password=jamii_mq_local_dev&amp;rabbitmq.exchange.name=jamii.loans.dlx&amp;rabbitmq.queue.routing.key=dlq"/>
+</endpoint>

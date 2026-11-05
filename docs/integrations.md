@@ -495,3 +495,142 @@ expose constant names (`ATT_ROOT_ELEMENT`, `RESULT_TYPE_Q`) without their
 literal values. Clone and aggregate are classic, well documented, and
 consistent with the rest of these artifacts. A deliberate choice, not an
 oversight.
+
+---
+
+## 5. Loan-application queue consumer (bonus)
+
+A RabbitMQ inbound endpoint consumes loan-application events, maps each onto
+the eligibility API's request shape, calls that API, and dead-letters anything
+it cannot process.
+
+```
+publish → jamii.loans (exchange, routing key loan.application)
+            ↓
+          jamii.loan.applications
+            ↓  LoanEventListener (inbound endpoint)
+          LoanEvent_Consumer       → POST localhost:8290/loans/eligibility → log the decision
+            ↓ unprocessable            ↓ faulted
+          jamii.loans.dlx  ←──────  LoanEvent_Error
+            ↓
+          jamii.loan.applications.dlq
+```
+
+### Running it
+
+```bash
+docker compose --profile mq up -d rabbitmq
+./mq/create-user.sh
+```
+
+The broker sits behind the `mq` profile so the day-to-day stack stays light.
+Exchanges, queues and the dead-letter binding come from the committed
+`mq/definitions.json`; the user comes from `.env` via `mq/create-user.sh`,
+because RabbitMQ skips creating `RABBITMQ_DEFAULT_USER` when a definitions
+file is loaded, and a definitions file declaring the user would have to carry
+its password hash in version control.
+
+### Publishing an event
+
+```bash
+curl -s -u jamii_mq:jamii_mq_local_dev -H 'Content-Type: application/json' \
+  -X POST http://localhost:15672/api/exchanges/%2F/jamii.loans/publish \
+  -d '{"properties":{"content_type":"application/json"},
+       "routing_key":"loan.application",
+       "payload":"{\"eventId\":\"evt-1\",\"eventType\":\"LoanApplicationSubmitted\",\"applicant\":{\"customerId\":\"1\",\"incomeMonthly\":150000,\"debtMonthly\":20000},\"loan\":{\"principal\":600000,\"tenorMonths\":24}}",
+       "payload_encoding":"string"}'
+```
+
+```
+event = EVENT_IN,      requestId = evt-1, queue = jamii.loan.applications
+event = BACKEND_CALL,  requestId = evt-1, backend = LoansAPI, customerId = 1
+event = BACKEND_CALL,  requestId = evt-1, backend = CalculatorSoap   ← inside LoansAPI
+event = DECISION,      requestId = evt-1, eligible = true, reason = WITHIN_DTI_LIMIT
+```
+
+The event's own `eventId` becomes the correlation id and is reused across both
+protocol hops, so one identifier traces broker → HTTP → SOAP.
+
+### The transformation
+
+| Event field | API field |
+|---|---|
+| `applicant.customerId` | `customerId` |
+| `applicant.incomeMonthly` | `monthlyIncome` |
+| `applicant.debtMonthly` | `monthlyDebt` |
+| `loan.principal` | `requestedAmount` |
+| `loan.tenorMonths` | `termMonths` |
+
+`eventId` and `eventType` are dropped. The event shape was chosen to differ
+from the API's deliberately, so a pass-through would visibly fail rather than
+accidentally work.
+
+### Failure handling
+
+| Input | Outcome | DLQ content |
+|---|---|---|
+| Valid, eligible or declined | acknowledged | — |
+| Valid JSON, required field missing | dead-lettered immediately | the original body, verbatim |
+| Invalid JSON | dead-lettered | a synthesised failure record |
+| Downstream API unreachable | dead-lettered | a synthesised failure record |
+
+A **declined** application is a successful consume, acknowledged like any
+other — the same principle as the HTTP API, where a decline is a `200`.
+
+Verified by publishing five messages in order and checking queue depths after
+each: valid, valid-declined, missing-field, invalid-JSON, valid. The DLQ ended
+with two entries and the main queue with none, and the fifth message was
+consumed normally — the poison messages did not block it.
+
+### Three things that look fine but silently lose messages
+
+Each was found by checking queue depths and consumer counts, not by watching
+the happy path work.
+
+1. **`<drop/>` and `<send>` leave the delivery unacknowledged.** Both end
+   mediation with a false return, which the inbound endpoint reads as a failed
+   consume. The message was dead-lettered *and* left unacked, and the unacked
+   delivery blocked the consumer for everything behind it. The consumer uses a
+   then/else split and `OUT_ONLY` + `<call>` instead, so the sequence runs to
+   its natural end and the ack happens.
+2. **An error sequence that only logs drops the message.** MI treats a
+   completed error sequence as "handled" and acknowledges the delivery, so a
+   valid event whose dependency was unreachable vanished — nothing on either
+   queue. `LoanEvent_Error` now publishes to the dead-letter exchange itself.
+3. **Forwarding an unparseable body kills the consumer.** The RabbitMQ sender
+   throws `Unable to get the message formatter to use`, the exception escapes
+   `handleDelivery`, and the consumer dies — leaving the queue with no
+   consumer. The error sequence builds its own always-valid JSON record
+   instead, and interpolates only the Synapse error code, never the error
+   message, which contains quotes and newlines.
+
+### No automatic retry
+
+The intended design had two failure classes: unprocessable messages
+dead-lettered at once, transient dependency failures retried a bounded number
+of times first. The second half is **not implemented**. On MI 4.6.0 all three
+documented mechanisms produced exactly one delivery attempt:
+
+1. the inbound endpoint's `rabbitmq.message.max.dead.lettered.count` and
+   `rabbitmq.message.requeue.delay`
+2. `SET_ROLLBACK_ONLY` + `SET_REQUEUE_ON_ROLLBACK` in `default` scope
+3. the same two properties in `axis2` scope
+
+Rather than ship configuration that reads as if it retries, the error sequence
+dead-letters explicitly and those parameters carry a comment recording that
+they did not take effect. A transient outage therefore parks the event on its
+first failure, and recovery means redriving the DLQ.
+
+Ordering, idempotency and exactly-once delivery are also out of scope — a
+redriven DLQ could re-apply a decision that already happened.
+
+### Credentials
+
+The broker user and password are **literal** in `LoanEventListener.xml` and
+`LoanEventDlqEP.xml`. MI resolves inbound endpoint parameters and endpoint
+URIs as static strings: neither `$env{}` nor `${configs.x}` is expanded, and
+the broker log confirmed it by refusing a login for the user
+`$env{JAMII_MQ_USER}` — the placeholder itself. They are therefore
+local-development-only values matching `.env.example`, and a real deployment
+would resolve them through MI's Secure Vault. `deployment.toml` still uses
+`$env{}` for the datasource, because the config mapper does process that file.

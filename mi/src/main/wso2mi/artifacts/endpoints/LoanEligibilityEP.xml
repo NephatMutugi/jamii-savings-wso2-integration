@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<endpoint name="LoanEligibilityEP" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- The consumer calls the existing eligibility API rather than
+         re-implementing the SOAP mapping, so there is one place where a loan
+         decision is made regardless of whether the request arrived over HTTP
+         or off the queue. -->
+    <http method="post" uri-template="http://localhost:8290/loans/eligibility">
+        <timeout>
+            <duration>8000</duration>
+            <responseAction>fault</responseAction>
+        </timeout>
+        <suspendOnFailure>
+            <errorCodes>-1</errorCodes>
+            <initialDuration>0</initialDuration>
+            <progressionFactor>1.0</progressionFactor>
+            <maximumDuration>0</maximumDuration>
+        </suspendOnFailure>
+        <markForSuspension>
+            <errorCodes>-1</errorCodes>
+        </markForSuspension>
+    </http>
+</endpoint>

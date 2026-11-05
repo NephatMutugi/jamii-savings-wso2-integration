@@ -1,0 +1,61 @@
+{
+  "rabbit_version": "3.13.0",
+  "vhosts": [{ "name": "/" }],
+  "exchanges": [
+    {
+      "name": "jamii.loans",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "jamii.loans.dlx",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "jamii.loan.applications",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "jamii.loans.dlx",
+        "x-dead-letter-routing-key": "dlq"
+      }
+    },
+    {
+      "name": "jamii.loan.applications.dlq",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "jamii.loans",
+      "vhost": "/",
+      "destination": "jamii.loan.applications",
+      "destination_type": "queue",
+      "routing_key": "loan.application",
+      "arguments": {}
+    },
+    {
+      "source": "jamii.loans.dlx",
+      "vhost": "/",
+      "destination": "jamii.loan.applications.dlq",
+      "destination_type": "queue",
+      "routing_key": "dlq",
+      "arguments": {}
+    }
+  ]
+}
